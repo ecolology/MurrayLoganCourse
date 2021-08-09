@@ -359,7 +359,7 @@ Applied examples
 
 ```{r}
 
-summary_tikus <- tikus %>%
+tikus %>%
   rename(`Acropora aspera` = `Acropera aspera`) %>%
   select(time, rep, starts_with("Acropora")) %>%
   pivot_longer(cols = c(-rep, -time), names_to = "species", values_to = "abundance") %>%
@@ -395,6 +395,7 @@ summary_tikus <-
             sd_yearly_cover = sd(total_cover)) %>%
   ungroup() %>%
   mutate(year = 1900 + as.numeric(as.character(time)))
+summary_tikus
 ```
 
 ```{r}
