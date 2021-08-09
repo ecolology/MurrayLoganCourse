@@ -39,6 +39,8 @@ mathfont: LiberationMono
 monofont: DejaVu Sans Mono
 classoption: a4paper
 bibliography: ../resources/references.bib
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r setup, include=FALSE, warnings=FALSE, message=FALSE}
@@ -114,23 +116,106 @@ dat.1 %>% head
 Sorting data
 ================
 ```{r, results='markup'}
-head(dat.1)
-#OR
-dat.1 %>% head()
-#OR
-dat.1 %>% head
+# Arrange by the Treatment, then Time
+dat.1 %>% 
+  arrange(Treatment, Time)
+
+# Arrange by Treatment, then by the mean of Resp 1 and Resp2
+dat.1 %>% 
+  mutate(Resp = mean(c(Resp1, Resp2))) %>%
+  arrange(Treatment, Resp)
 ```
 
 Adding columns - mutate
 ===========================
 
+```{r}
+dat.1 %>%
+  mutate(
+    Dose = fct_relevel(Dose, c('L', 'M', 'H')),
+    Dose = fct_recode(Dose, High = "H", Medium = "M")) %>%
+  as_tibble %>%
+  pull(Dose)
+
+
+dat.1 %>% 
+  mutate(leadResp2 = lead(Resp2), 
+         lagResp1 = lag(Resp1))
+
+dat.1 %>%
+  mutate(rank_time = min_rank(Time),
+         dens_rank_time = dense_rank(Time))
+
+dat.1 %>%
+  mutate(row_Resp1 = row_number(Resp1), 
+         row_time = row_number(Time),
+         rank_time = min_rank(Time),
+         ntile_Resp1 = ntile(Resp1, 4),
+         medium_Resp1 = between(Resp1, 20, 40),
+         fResp1A = case_when(Resp1 < 31 ~ "Low",
+                 between(Resp1, 31, 50) ~ "Medium",
+                 Resp1 > 50 ~ "High"),
+         fResp1B = cut(Resp1, breaks = c(0, 31, 50, 200),
+                              labels = c("Low", "Medium", "High")),
+         fResp1C = cut(Resp1, breaks = 2,
+                              labels = c("Low", "High")))
+```
+
 
 Summarising (aggregating) data
 =================================
+```{r}
+SE <- function(x) sd(x) / sqrt(length(x))
+dat.1 %>% 
+  summarise(MeanResp1 = mean(Resp1), VarResp1 = var(Resp1),
+            SEM = SE(Resp1))
+
+# Using anonymous function:
+dat.1 %>% summarise(MeanResp1 = mean(Resp1), VarResp1 = var(Resp1),
+          SEM = (function(x) sd(x) / sqrt(length(x)))(Resp1))
+
+# Summarize across a number of variables
+dat.1 %>% summarise(across(c(Resp1, Resp2), 
+                           list(Mean = mean, Var = var)))
+
+# Get mean and var
+dat.1 %>% summarise(across(where(is.numeric), 
+                           list(Mean = mean, Var = var)))
+
+# Get mean and length
+dat.1 %>% summarize(across(where(is.numeric),  mean),
+          across(where(is.factor),  length))
+
+Variable <- c("Resp1", "Resp2")
+dat.1 %>% summarise(across(all_of(Variable), list(Mean = mean, Var = var)))
+```
 
 
 Grouping (=aggregating)
 =========================
+```{r}
+dat.1 %>%
+  arrange(Resp1) %>%
+    group_by(Treatment, Plot) %>%
+    summarise(Mean = mean(Resp1),
+              Var = var(Resp1),
+              N = n(),
+              First = first(Resp1))
+```
+
+```{r}
+tikus[1:10, c(1:3, 76:77)]
+
+tikus %>% 
+  # head(10) %>%
+  # select("Psammocora contigua", "Psammocora digitata", "Pocillopora damicornis", "time", "rep") %>%
+  arrange(`Pocillopora damicornis`) %>%
+  group_by(time) %>%
+  summarise(across(all_of(c("Psammocora contigua", "Psammocora digitata", "Pocillopora damicornis")), list(Mean = mean))) %>%
+  ungroup()
+
+
+```
 
 
 Subset columns
