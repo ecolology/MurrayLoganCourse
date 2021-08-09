@@ -214,29 +214,201 @@ tikus %>%
   summarise(across(all_of(c("Psammocora contigua", "Psammocora digitata", "Pocillopora damicornis")), list(Mean = mean))) %>%
   ungroup()
 
-
 ```
 
 
 Subset columns
 =================
+```{r}
+dat.1 %>% dplyr::select(-starts_with(c("T","D")))
+
+dat.1 %>% dplyr::select(contains("e"))
+
+dat.1 %>% dplyr::select(where(is_numeric))
+
+dat.1 %>% select(matches("^.{4}$")) # regex for get only columns with 4-characters
+
+```
+
 
 ## Regular expressions (regex)
+```{r}
+nasa %>% 
+  select(lat, long, starts_with("cloud"))
+
+nasa %>% 
+  select(lat, long, matches("^cloud.*$")) %>% head
+```
+
+```{r}
+# Select rep, time, but not any with pora
+tikus %>% select(rep, time, !contains("pora")) %>% 
+  ncol()
+
+# Same thing, but older way of doing it
+tikus %>% select(rep, time, everything(), -contains("pora")) %>%
+  ncol()
+```
+
+```{r}
+dat.1 %>% rename(Exposure = Treatment, Richness = Resp1) %>%
+  relocate(Richness, .before=Plot)
+```
 
 https://github.com/rstudio/cheatsheets/raw/master/data-transformation.pdf
 
 Filtering
 =============
+```{r}
+dat.1 %>% filter(Dose == "H" & Resp1 < 25) %>% nrow
+dat.1 %>% filter(Dose == "H" | Resp1 < 25) %>% nrow
+```
+
+Be careful about not being ambiguous!
+```{r}
+dat.1 %>%
+  filter(Resp1 < 40 & (Time > 1 | Dose == "L")) %>% nrow
+dat.1 %>%
+  filter((Resp1 < 40 & Time > 1) | Dose == "L") %>% nrow
+```
+
+```{r}
+nasa %>% 
+  dplyr::filter(month == 2, year == max(year)) %>%
+  filter(ozone == max(ozone))
+nasa %>% 
+  dplyr::filter(month == 2 & year == max(year)) %>%
+  arrange(-ozone) %>% slice(1)
+
+```
+
+```{r}
+nasa %>% filter(month == 1, year == max(year)) %>%
+  filter(ozone > 320 & ozone < 325)
+nasa %>% 
+  filter(month == 1, year == max(year), between(ozone, 320, 325))
+```
+
+Always make sure to drop 'ghost' levels
+```{r}
+dat.1 %>%
+  filter(Plot == "P1") %>%
+  pull(Plot) %>%
+  levels
+dat.1 %>%
+  filter(Plot == "P1") %>%
+  pull(Plot) %>%
+  droplevels()
+```
+
 
 Reshaping data
 =================
 
 ## Pivot longer
 
+```{r}
+data.w %>%
+  pivot_longer(cols = starts_with("Time"),
+               names_to = "time", values_to = "min") %>%
+  mutate(time = as.numeric(str_extract(time, "(?<=Time.).")))
+
+# easier way:
+data.w %>%
+  pivot_longer(cols = starts_with("Time"),
+               names_to = "time", values_to = "min",
+               names_prefix = "Time.") %>% # makes it way easier!!
+  mutate(time = as.numeric(time))
+```
+
+
 ## Pivot wider
+
+```{r}
+data %>%
+  pivot_wider(names_from = Within, values_from = c(Resp1, Resp2))
+```
 
 Combining data
 =================
 
+```{r}
+data.bio <- data.bio %>% relocate(Resp1, Resp2, .after=Subplot)
+
+data.bio %>% full_join(data.chem) %>%
+  arrange(Plot, Subplot)
+
+data.bio %>% left_join(data.chem) %>%
+  arrange(Plot, Subplot)
+
+data.bio %>% right_join(data.chem) %>%
+  arrange(Plot, Subplot)
+
+data.bio %>% inner_join(data.chem) %>%
+  arrange(Plot, Subplot)
+
+data.bio %>% rbind(data.bio[6:9,]) %>%
+  left_join(data.chem) %>%
+  arrange(Plot, Subplot) # same as vlookup!
+
+```
+
+
 Applied examples
 ===================
+
+```{r}
+
+summary_tikus <- tikus %>%
+  rename(`Acropora aspera` = `Acropera aspera`) %>%
+  select(time, rep, starts_with("Acropora")) %>%
+  pivot_longer(cols = c(-rep, -time), names_to = "species", values_to = "abundance") %>%
+  mutate(cover = abundance / (10*100),
+         per_cover = cover * 100) %>%
+  group_by(time, rep) %>%
+  summarise(total_acropora_cover = sum(cover)) %>%
+  ungroup() %>%
+  group_by(time) %>% # averaging across all sites now
+  summarise(mean_yearly_acropora_cover = mean(total_acropora_cover),
+            sd_yearly_acropora_cover = sd(total_acropora_cover)) %>%
+  ungroup() %>%
+  mutate(year = 1900 + as.numeric(as.character(time)))
+  
+
+```
+
+```{r}
+summary_tikus <- 
+  tikus %>%
+  rename(`Acropora aspera` = `Acropera aspera`) %>%
+  # select(time, rep, starts_with("Acropora")) %>%
+  pivot_longer(cols = c(-rep, -time), names_to = "species", values_to = "abundance") %>%
+  mutate(cover = abundance / (10*100),
+         per_cover = cover * 100) %>%
+  separate(col = species, c("genus", "species")) %>%
+  group_by(genus, time, rep) %>%
+  summarise(total_cover = sum(cover)) %>%
+  ungroup() %>%
+  mutate(genus = fct_lump_n(genus, 5, total_cover)) %>%
+  group_by(genus, time) %>% # averaging across all sites now
+  summarise(mean_yearly_cover = mean(total_cover),
+            sd_yearly_cover = sd(total_cover)) %>%
+  ungroup() %>%
+  mutate(year = 1900 + as.numeric(as.character(time)))
+```
+
+```{r}
+theme_set(theme_classic())
+summary_tikus %>%
+   ggplot(aes(x = year, y = mean_yearly_cover, group = genus)) +
+  facet_wrap(~genus) +
+   geom_line(linetype = "dashed") +
+  geom_area(aes(fill = genus), alpha = 0.5) +
+   labs(x = "Year", y = "Mean Acropora Cover") +
+   scale_y_continuous(labels = scales::label_percent(),
+                      expand = expansion()) +
+  scale_x_continuous(expand = expansion())
+```
+
+
+
