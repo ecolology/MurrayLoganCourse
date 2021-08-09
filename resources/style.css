@@ -115,7 +115,7 @@ slides h1,h2,h3 {
 }
 
 slides h1 {
-    /*background: url(PikPng.com_paint-brush-stroke-png_2380207.png);*/
+    background: url(PikPng.com_paint-brush-stroke-png_2380207.png);
     background-repeat: no-repeat;
     background-size: 100% 95%;
     padding: 8px 0;
@@ -129,7 +129,7 @@ slides h2 {
     letter-spacing: -2px;
     font-family: CabinSketch, Arial, serif;
     color: #3E769A;
-    /*background: url(PikPng.com_paint-brush-stroke-png_2380207.png);*/
+    background: url(PikPng.com_paint-brush-stroke-png_2380207.png);
     background-repeat: no-repeat;
     background-size: 100% 95%;
     padding: 8px 0;
@@ -395,7 +395,7 @@ slides > slide pre.lang-bash1 .lit {
 }
 
 .highlight {
-    /*background: url(PikPng.com_paint-brush-stroke-png_2380207.png);*/
+    background: url(PikPng.com_paint-brush-stroke-png_2380207.png);
     /*background: url(brush-stroke-banner-6.png);*/
     background-repeat: no-repeat;
     background-size: 100% 95%;
@@ -414,7 +414,7 @@ slide ul li::marker {
 }
 
 slides>slide:not(.background,.title-slide):after {
-    /*background: url(blob.png);*/
+    background: url(blob.png);
     /*background: url(brush-stroke-banner-6.png);*/
     background-repeat: no-repeat;
     background-size: 100% 100%;
