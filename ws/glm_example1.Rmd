@@ -39,6 +39,8 @@ mathfont: LiberationMono
 monofont: DejaVu Sans Mono
 classoption: a4paper
 bibliography: ../resources/references.bib
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r setup, include=FALSE}
@@ -64,6 +66,7 @@ library(ggeffects) #for partial effects plots
 library(emmeans)   #for estimating marginal means
 library(modelr)    #for auxillary modelling functions
 library(tidyverse) #for data wrangling
+theme_set(theme_classic())
 ```
 
 # Scenario
@@ -72,7 +75,7 @@ Here is an example from @Fowler-1998-1998. An agriculturalist was interested in 
 
 ![](../resources/turf.jpg){width=70%}
 
-| FERTILIZER   | YIELD   |
+| fert   | yield   |
 | ------------ | ------- |
 | 25           | 84      |
 | 50           | 80      |
@@ -82,8 +85,8 @@ Here is an example from @Fowler-1998-1998. An agriculturalist was interested in 
 | \...         | \...    |
 
 ---------------- ---------------------------------------------------
-**FERTILIZER**:  Mass of fertilizer (g.m^-2^) - Predictor variable
-**YIELD**:       Yield of grass (g.m^-2^) - Response variable
+**fert**:  Mass of fertilizer (g.m^-2^) - Predictor variable
+**yield**:       Yield of grass (g.m^-2^) - Response variable
 ---------------- ---------------------------------------------------
 
  
@@ -94,6 +97,7 @@ The aim of the analysis is to investigate the relationship between fertilizer co
 
 ```{r readData, results='markdown', eval=TRUE}
 fert = read_csv('../data/fertilizer.csv', trim_ws=TRUE)
+fert <- rename(fert, yield = YIELD, fert = FERTILIZER)
 ```
 
 
@@ -105,6 +109,12 @@ str(fert)
 ```
 
 # Exploratory data analysis
+```{r}
+ggplot(fert, aes(x = fert, y = yield)) +
+  geom_smooth(method = 'lm') +
+    geom_smooth(se=F, col="red") +
+    geom_point()
+```
 
 
 Model formula:
@@ -120,13 +130,13 @@ estimated variance.
 
 
 ```{r EDA, results='markdown', eval=TRUE, hidden=TRUE, message=FALSE}
-ggplot(fert, aes(y=YIELD, x=FERTILIZER)) +
+ggplot(fert, aes(y=yield, x=fert)) +
   geom_point() +
   geom_smooth()
-ggplot(fert, aes(y=YIELD, x=FERTILIZER)) +
+ggplot(fert, aes(y=yield, x=fert)) +
   geom_point() +
   geom_smooth(method='lm')
-ggplot(fert, aes(y=YIELD)) +
+ggplot(fert, aes(y=yield)) +
   geom_boxplot(aes(x=1))
 ```
 
@@ -140,12 +150,99 @@ ggplot(fert, aes(y=YIELD)) +
 
 
 ```{r fitModel, results='markdown', eval=TRUE, hidden=TRUE}
-fert.lm<-lm(YIELD~1+FERTILIZER, data=fert)
-fert.lm<-lm(YIELD~FERTILIZER, data=fert)
+fert.lm<-lm(yield~1+fert, data=fert)
+fert.lm<-lm(yield~fert, data=fert)
+attributes(fert.lm)
+names(fert.lm)
 ```
 
 
 # Model validation {.tabset .tabset-faded}
+
+Check if our assumptions really are adequate!
+
+```{r}
+autoplot(fert.lm, which = 1:6, ncol = 2, label.size = 3)
+```
+
+1. Residual plot
+Model residuals vs. fitted values/expected values
+
+* No patterns in the points; random scattering
+* Watch out for wedge shape, indicating a relationship between mean and variance
+
+
+2. Quantile-quantile (QQ) plot
+Compares your observed values  to what they should look like if from a Gaussian distribution (or depending on the selected distribution)
+
+* Points should follow a 1:1 line
+* Often will see that the tails near the beginning or end dip over or under the line, indicating it's not a great fit
+
+
+3. Scale-location plot
+
+* If we were correcting for autocorrelation, this one should appear random while the residual plot would not
+* Otherwise, just looks the same
+
+
+4. Cook's distance
+Determines how influential each point is; calculated by using the residual value and overall leverage on the significant pattern
+
+* Values over 0.8 or 1 is considered 'too' influential
+* Look for either an outlier along the x- and/or y-axis
+
+5. Residuals vs. leverage
+
+* Not so useful, but shows if a residual is also high in leverage
+
+
+6. Cook's distance vs. leverage
+
+* Determines if an influential point is due to high leverage (on its own) or not, based on red boundary
+
+
+Get the Cook's d values:
+```{r}
+influence.measures(fert.lm)
+```
+Leverage is in the hat column
+
+
+Using `performance` package:
+```{r}
+require(performance)
+performance::check_model(fert.lm, check = c("normality", "homogeneity", "ncv"))
+performance::check_outliers(fert.lm)
+# Checks for cook's d values and leverage
+```
+
+Using `DHARMa` package:
+```{r}
+require(DHARMa)
+fert.resid <- simulateResiduals(fert.lm, plot = T)
+
+```
+Left-hand side: QQ plot
+* K-S is a test for the distribution fit being significantly different from Gaussian, but is very strict, the test is more robust than this assumption
+* Don't have to worry about dispersion for Gaussian
+* Outlier test determined by Cook's distance and leverage, but better determined by plotting Cook's distances
+
+Right-hand side: residual plot
+
+* each line is a quantile regression (25%, median, and 75% quantile regressions)
+* turn red when heteroscedastic or variance increasing with mean, cause for concern if multiple lines are red
+```{r}
+testZeroInflation(fert.resid)
+```
+
+
+
+
+
+
+```{r}
+testResiduals(fert.resid)
+```
 
 
 
@@ -158,6 +255,22 @@ fert.lm<-lm(YIELD~FERTILIZER, data=fert)
 
 
 # Model outputs {.tabset .tabset-faded}
+
+Can plot partial plots:
+
+```{r}
+fert.lm %>% plot_model(type = "eff", show.data = T)
+plot(effects::allEffects(fert.lm, residuals = T))
+```
+
+Looks good!
+
+Using package `ggemmeans`:
+```{r}
+fert.lm %>% ggemmeans(~fert) %>% plot(add.data = T)
+```
+
+
 
 
 # Model investigation / hypothesis testing {.tabset .tabset-faded}
