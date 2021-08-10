@@ -75,7 +75,7 @@ Here is a modified example from @Peake-1993-269.  @Peake-1993-269 investigated t
 
 Format of peakquinn.csv data files
 
-| AREA      | INDIV   |
+| area      | indiv   |
 | --------- | ------- |
 | 516.00    | 18      |
 | 469.06    | 60      |
@@ -85,8 +85,8 @@ Format of peakquinn.csv data files
 | \...      | \...    |
 
 ----------- --------------------------------------------------------------
-**AREA**    Area of mussel clump mm^2^ - Predictor variable
-**INDIV**   Number of individuals found within clump - Response variable
+**area**    Area of mussel clump mm^2^ - Predictor variable
+**indiv**   Number of individuals found within clump - Response variable
 ----------- --------------------------------------------------------------
 
 
@@ -96,7 +96,8 @@ The aim of the analysis is to investigate the relationship between mussel clump 
 # Read in the data
 
 ```{r readData, results='markdown', eval=TRUE}
-peake = read_csv('../data/peakquinn.csv', trim_ws=TRUE)
+peake = read_csv('../data/peakquinn.csv', trim_ws=TRUE) %>%
+  janitor::clean_names()
 glimpse(peake)
 ```
 
@@ -115,10 +116,26 @@ includes an intercept ($\beta_0$) and slope ($\beta_i$) for natural log
 transformed area.
 expected values are 
 
-# Fit the model
+## Fit the model
+```{r}
+peake.glm <- glm(indiv ~ area, data=peake, family=poisson(link = "log"))
+```
 
+## Model validation
+```{r}
+simulateResiduals(peake.glm, plot=T) # highly overdispersed!!
+peake.nb <- glm.nb(indiv ~ area, data = peake)
+simulateResiduals(peake.nb, plot=T) 
+
+```
+
+Residuals do not follow the correct path
 
 ## Partial plots {.tabset .tabset-faded}
+```{r}
+peake.nb %>% ggemmeans(~area) %>% plot(add.data=T)
+```
+Still not a good fit!
 
 # Model investigation / hypothesis testing {.tabset .tabset-faded}
 

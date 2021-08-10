@@ -39,6 +39,8 @@ mathfont: LiberationMono
 monofont: DejaVu Sans Mono
 classoption: a4paper
 bibliography: ../resources/references.bib
+editor_options: 
+  chunk_output_type: inline
 ---
 
 ```{r setup, include=FALSE, warnings=FALSE, message=FALSE}
@@ -66,6 +68,7 @@ library(performance) #for residuals diagnostics
 library(see)         #for plotting residuals
 library(patchwork)   #for grids of plots
 library(tidyverse) #for data wrangling
+theme_set(theme_classic())
 ```
 
 # Scenario
@@ -79,18 +82,18 @@ been isolated).
 
 Format of loyn.csv data file
 
-ABUND   DIST   LDIST   AREA   GRAZE   ALT   YR.ISOL
+abund   dist   ldist   area   graze   alt   yr_isol
 ------- ------ ------- ------ ------- ----- ---------
 ..      ..     ..      ..     ..      ..    ..
 
 ------------- ------------------------------------------------------------------------------
-**ABUND**     Abundance of forest birds in patch- response variable
-**DIST**      Distance to nearest patch - predictor variable
-**LDIST**     Distance to nearest larger patch - predictor variable
-**AREA**      Size of the patch - predictor variable
-**GRAZE**     Grazing intensity (1 to 5, representing light to heavy) - predictor variable
-**ALT**       Altitude - predictor variable
-**YR.ISOL**   Number of years since the patch was isolated - predictor variable
+**abund**     Abundance of forest birds in patch- response variable
+**dist**      Distance to nearest patch - predictor variable
+**ldist**     Distance to nearest larger patch - predictor variable
+**area**      Size of the patch - predictor variable
+**graze**     Grazing intensity (1 to 5, representing light to heavy) - predictor variable
+**alt**       Altitude - predictor variable
+**yr_isol**   Number of years since the patch was isolated - predictor variable
 ------------- ------------------------------------------------------------------------------
 
 The aim of the analysis is to investigate the effects of a range of predictors on the abundance of forest birds.
@@ -98,14 +101,69 @@ The aim of the analysis is to investigate the effects of a range of predictors o
 # Read in the data
 
 ```{r readData, results='markdown', eval=TRUE}
-loyn = read_csv('../data/loyn.csv', trim_ws=TRUE)
+loyn = read_csv('../data/loyn.csv', trim_ws=TRUE) %>%
+  janitor::clean_names()
 glimpse(loyn)
 ```
 
 # Exploratory data analysis {.tabset .tabset-faded}
 
+Avoid multicollinearity (correlated variables CAN be included to soak up the variance but CANNOT be interpreted while other correlated variables are there!)
+```{r}
+# pairs(loyn)
+scatterplotMatrix(~abund + dist + ldist + area + graze + alt + yr_isol, 
+                  data=loyn, diagonal = list(method = 'boxplot'),
+                  regLine = list(col="red"))
+glm(abund ~ ., data = loyn) %>% vif
+
+```
+
+Predictors must be transformed, as the family relates only to the response. Log area in particular is particularly skewed.
+
+```{r}
+scatterplotMatrix(~abund + log(dist) + log(ldist) + log(area) + 
+                    graze + alt + yr_isol, 
+                  data=loyn, diagonal = list(method = 'boxplot'),
+                  smooth=list(col.spread="green"),
+                  regLine = list(col="red"))
+glm(abund ~ log(dist) + log(ldist) + log(area) + 
+                    graze + alt + yr_isol, data = loyn) %>% vif
+
+
+# loyn <- loyn %>%
+#   mutate(larea = log(area)) %>% 
+#   dplyr::select(-area)
+```
+
+Graze has a high VIF, consider deleting. Also, should maybe be ordinal/categorical instead.
+
 
 # Fit the model
+```{r}
+loyn <- loyn %>% 
+  mutate(fgraze = as.factor(graze),
+         l_dist = log(dist),
+         l_ldist = log(ldist),
+         l_area = log(area),
+         sl_dist = scale(l_dist, scale=F),
+         sl_ldist = scale(l_ldist, scale=F),
+         sl_area = scale(l_area),
+         salt = scale(alt, scale=F),
+         syr_isol = scale(yr_isol, scale=F)
+)
+  
+loyn.glm <- glm(abund ~ sl_dist + sl_ldist + sl_area + 
+                    fgraze + salt + syr_isol,
+                data = loyn,
+                family = gaussian(link = "identity"))
+vif(loyn.glm) # none above 3
+
+```
+The rule is **we don't want values above 3** for VIF, otherwise, that variable is correlated to the others in a way that obscures its interpretation.
+
+
+There's also a function to easily compare scaled effect sizes of all variables rather than do so here. That way, we can still interpret the function with the appropriate units here, but also check effect sizes later on as well.
+
 
 Model formula:
 $$
@@ -114,14 +172,90 @@ log(\mu_i) = \boldsymbol{\beta} \bf{X_i}
 $$
 
 where $\boldsymbol{\beta}$ is a vector of effects parameters and $\bf{X}$ is a model matrix representing the additive effects of
-the scaled versions of distance (ln), distance to the nearest large patch (ln), patch area (ln), grazing intensity, year of isolation and 
+the scaled versions of distance (*ln*), distance to the nearest large patch (*ln*), patch area (*ln*), grazing intensity, year of isolation and 
 altitude on the abundance of forest birds.
 
 
 # Model validation {.tabset .tabset-faded}
 
+```{r}
+autoplot(loyn.glm, which = 1:6)
+```
+
+Residuals are ok, normality not great, but should be robust to this. Cook's d are all low (less than 0.8).
+
+```{r}
+loyn.resid <- simulateResiduals(loyn.glm, plot=T)
+```
+
+Homoscedasticity is ok too.
+
+When you have multiple variables, need to also plot the residuals against each predictor variable too.
+```{r}
+loyn$resid <- loyn.resid$scaledResiduals
+loyn %>%
+  ggplot(aes(x = l_dist, y = resid)) +
+  geom_point() +
+  geom_smooth(se=F)
+loyn %>%
+  ggplot(aes(x = l_ldist, y = resid)) +
+  geom_point() +
+  geom_smooth(se=F)
+loyn %>%
+  ggplot(aes(x = l_area, y = resid)) +
+  geom_point() +
+  geom_smooth(se=F)
+loyn %>%
+  ggplot(aes(x = alt, y = resid)) +
+  geom_point() +
+  geom_smooth(se=F)
+loyn %>%
+  ggplot(aes(x = yr_isol, y = resid)) +
+  geom_point() +
+  geom_smooth(se=F)
+
+# Didn't have enough time to finish this last plot
+# loyn %>%
+#   
+#   group_by(fgraze) %>%
+#   summarise(mean = mean(resid),
+#             se = sd(resid) / sqrt( n() ),
+#             upr = gmodels::ci(resid)[3]) %>%
+#   ggplot(aes(x = fgraze, y = mean)) +
+#   geom_bar() +
+#   geom_pointrange(aes(ymin = lwr, ymax = upr))
+```
+
+
+
+
 
 # Partial plots {.tabset .tabset-faded}
+
+```{r}
+loyn.glm %>% ggemmeans(~sl_dist) %>% plot(add=T)
+loyn.glm %>% ggemmeans(~sl_ldist) %>% plot(add=T)
+loyn.glm %>% ggemmeans(~salt) %>% plot(add=T)
+loyn.glm %>% ggemmeans(~syr_isol) %>% plot(add=T)
+
+loyn.glm %>% ggemmeans(~sl_area + fgraze) %>% plot(add=T)
+```
+
+
+
+```{r}
+plot_model(loyn.glm, type = 'eff', show.data = T, dot.size = 0.5) %>%
+  plot_grid
+```
+
+Note that if we had used log() and scale() in the glm function, plot_model would do the appropriate back-transform to the original scale, amazingly!
+
+log-area is clearly important, as well as graze = 5.
+
+```{r}
+plot(allEffects(loyn.glm, residuals = T), type = "response")
+```
+
 
 # Caterpillar plot
 
@@ -132,6 +266,12 @@ plot_model(loyn.glm,  type='est', transform='exp', show.values=TRUE)
 
 
 # Model investigation / hypothesis testing {.tabset .tabset-faded}
+
+```{r}
+summary(loyn.glm)
+```
+Evidence of an effect of log-area and of grazing area 5 being less than grazing 1, while all other grazing levels were not different from grazing 1. Need to investigate pair-wise effects among the factor levels thereafter.
+
 
 
 # Further analyses {.tabset .tabset-faded}
