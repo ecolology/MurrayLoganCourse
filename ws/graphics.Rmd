@@ -39,6 +39,8 @@ mathfont: LiberationMono
 monofont: DejaVu Sans Mono
 classoption: a4paper
 bibliography: ../resources/references.bib
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r setup, include=FALSE, warnings=FALSE, message=FALSE}
@@ -51,10 +53,12 @@ Load the necessary libraries
 
 ```{r libraries, results='markdown', eval=TRUE, message=FALSE, warning=FALSE}
 library(tidyverse) #for data wrangling
+theme_set(theme_classic())
 library(grid)
 library(patchwork)
 library(scales)
 library(gridExtra)
+load(file='../data/manipulationDatasets.RData')
 ```
 
 Graphics infrastructure
@@ -73,6 +77,7 @@ Motivating data
 ```{r, results='markup'}
 head(BOD)
 summary(BOD)
+BOD <- rename(BOD, time = Time)
 ```
 
 Layers
@@ -85,12 +90,37 @@ Layers
     - **position** control
 
 ## geom_point
+```{r}
+ggplot(data = BOD, aes(y = demand, x = time)) +
+  geom_line(aes(col = time)) +
+  geom_point(aes(col = demand, size=demand)) +
+  scale_color_viridis_c() +
+  guides(color = guide_legend(title = "Time"),
+         size = guide_legend(title = "Demand")) +
+  labs(x = "Time", y = "Demand")
+```
+
+```{r}
+ggplot(CO2, aes(y = uptake, x = conc)) + 
+  geom_point()+
+  scale_x_log10(name = "CO2 conc",
+    breaks = as.vector(c(1, 2, 5, 10) %o% 10^(-1:2)))
+
+# works well to create nice breaks around 1, 2, 5, and 10 at different log scales!
+c(1, 2, 5, 10) %o% 10^(-1:2)
+```
+
+
 
 Primary geometric objects
 ===========================
 
 `geom_bar`
 ------------
+```{r}
+
+```
+
 
 
 `geom_boxplot`
@@ -155,6 +185,23 @@ Other scales
 
 `scale_fill` and `scale_color`
 -------------------------------
+
+```{r}
+state=data.frame(state.x77, state.region, state.division, state.center) %>%
+    select(Illiteracy, state.region, x, y)
+head(state)
+
+state %>%
+  group_by(state.region) %>%
+  summarise(mean_il = mean(Illiteracy),
+            se_il = sd(Illiteracy) / sqrt( n() ),
+            lwr_il = gmodels::ci(Illiteracy)[2],
+            upr_il = gmodels::ci(Illiteracy)[3]) %>%
+  ggplot(aes(x = state.region, y = mean_il, fill=state.region)) +
+  geom_col() +
+  geom_pointrange(aes(ymin = lwr_il, ymax = upr_il)) +
+  labs(x = "Region", y = "Mean Illiteracy (%)")
+```
 
 Facets
 ==========
