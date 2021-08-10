@@ -270,6 +270,11 @@ Using package `ggemmeans`:
 fert.lm %>% ggemmeans(~fert) %>% plot(add.data = T)
 ```
 
+Confidence intervals:
+```{r}
+confint(fert.lm)
+tidy(fert.lm, conf.int = T)
+```
 
 
 
@@ -277,6 +282,56 @@ fert.lm %>% ggemmeans(~fert) %>% plot(add.data = T)
 
 
 # Predictions {.tabset .tabset-faded}
+
+```{r}
+newdata = data.frame(fert = 110)
+predict(fert.lm, newdata = newdata)
+```
+
+Using package `emmeans`:
+(newdata to be a list)
+
+```{r}
+newdata = list(fert = 110)
+emmeans(fert.lm, ~fert, at = newdata)
+## Input is:
+# model
+# predictor we're interested in
+# at the things held constant we are interested in
+```
+
+```{r}
+# can use either of these:
+fert_grid <- fert %>% data_grid(fert = seq_range(fert, n=100))
+fert_grid <- expand_grid(fert = seq_range(fert$fert, n=100))
+pred_yield <- emmeans(fert.lm, ~ fert, at = fert_grid) %>% as.data.frame %>% 
+  mutate(yield = emmean)
+
+fert %>%
+  ggplot(aes(x = fert, y = yield)) +
+  geom_ribbon(data = pred_yield, aes(ymin = lower.CL, ymax = upper.CL), fill = "green", alpha = 0.3) +
+  geom_point() +
+  geom_line(data = pred_yield) +
+  labs(x = expression(Fertilizer~concentration~(g.ml^-1)), 
+       y = expression(Gradd~yield~(g.m^-3)))
+```
+
+
+Get pair-wise difference calculations:
+```{r}
+newdata <- list(fert = c(100,200))
+emmeans(fert.lm, ~fert, at = newdata) %>% pairs() %>% confint()
+```
+
+Centre the data (but not scale it):
+```{r}
+fert.lm1 <- lm(yield ~ scale(fert, scale=F), data=fert) 
+summary(fert.lm1)
+```
+
+
+
+
 
 
 # Additional analyses {.tabset .tabset-faded}
