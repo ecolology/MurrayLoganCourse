@@ -139,6 +139,9 @@ Graze has a high VIF, consider deleting. Also, should maybe be ordinal/categoric
 
 
 # Fit the model
+
+**BIG NOTE:** scale=F does not work with emmeans, as they are trying to get everyone to write FALSE rather than F for short!!
+
 ```{r}
 loyn <- loyn %>% 
   mutate(fgraze = as.factor(graze),
@@ -234,20 +237,20 @@ loyn %>%
 # Partial plots {.tabset .tabset-faded}
 
 ```{r}
-loyn.glm2 <- glm(abund ~ sl_dist + sl_ldist + sl_area + fgraze + 
+loyn.glmb <- glm(abund ~ sl_dist + sl_ldist + sl_area + fgraze + 
                    salt + syr_isol, data = loyn,
                 family = gaussian(link = "identity"))
-loyn.glm2 %>% ggemmeans(~sl_dist) %>% plot(add=T)
-loyn.glm2 %>% ggemmeans(~sl_ldist) %>% plot(add=T)
-loyn.glm2 %>% ggemmeans(~salt) %>% plot(add=T)
-loyn.glm2 %>% ggemmeans(~syr_isol) %>% plot(add=T)
-loyn.glm2 %>% ggemmeans(~sl_area + fgraze) %>% plot(add=T)
+loyn.glmb %>% ggemmeans(~sl_dist) %>% plot(add=T)
+loyn.glmb %>% ggemmeans(~sl_ldist) %>% plot(add=T)
+loyn.glmb %>% ggemmeans(~salt) %>% plot(add=T)
+loyn.glmb %>% ggemmeans(~syr_isol) %>% plot(add=T)
+loyn.glmb %>% ggemmeans(~sl_area + fgraze) %>% plot(add=T)
 ```
 
 
 
 ```{r}
-plot_model(loyn.glm2, type = 'eff', show.data = T, dot.size = 0.5) %>%
+plot_model(loyn.glmb, type = 'eff', show.data = T, dot.size = 0.5) %>%
   plot_grid
 ```
 
@@ -256,7 +259,7 @@ Note that if we had used log() and scale() in the glm function, plot_model would
 log-area is clearly important, as well as graze = 5.
 
 ```{r}
-plot(allEffects(loyn.glm2, residuals = T), type = "response")
+plot(allEffects(loyn.glmb, residuals = T), type = "response")
 ```
 
 
@@ -336,13 +339,13 @@ Pre-register models to explain the variables
 
 ```{r}
 loyn.glm1 <- update(loyn.glm, . ~ 
-                      scale(l_dist, scale=F) * scale(l_ldist, scale=F))
+                      scale(l_dist, scale=FALSE) * scale(l_ldist, scale=FALSE))
 loyn.glm2 <- update(loyn.glm, . ~ 
-                      scale(l_area, scale=F) * fgraze)
+                      scale(l_area, scale=FALSE) * fgraze)
 loyn.glm3 <- update(loyn.glm, . ~ 
-                      scale(l_area, scale=F) * fgraze * scale(yr_isol, scale=F))
+                      scale(l_area, scale=FALSE) * fgraze * scale(yr_isol, scale=FALSE))
 loyn.glm4 <- update(loyn.glm, . ~ 
-                      scale(alt, scale=F))
+                      scale(alt, scale=FALSE))
 loyn.null <- update(loyn.glm, . ~ 1)
 
 AICc(loyn.glm1, loyn.glm2, loyn.glm3, loyn.glm4, loyn.null) %>% arrange(AICc)
@@ -354,6 +357,71 @@ glance(loyn.glm2)
 ```
 
 
+```{r}
+loyn.glm2b <- update(loyn.glm, . ~ sl_area * fgraze)
+
+loyn.glm2b.s <- emmeans(loyn.glm2b, "fgraze", data=loyn)
+pairs(loyn.glm2b)
+
+emtrends(loyn.glm2b, pairwise~fgraze, var = 'sl_area')
+
+loyn.grid <- with(loyn,
+                  list(fgraze = levels(fgraze),
+                       sl_area = seq_range(sl_area, n=100)))
+newdata <- emmeans(loyn.glm2b, ~ sl_area|fgraze, at = loyn.grid) %>% as.data.frame %>%
+  rename(abund = emmean, lwr = asymp.LCL, upr = asymp.UCL)
+
+newdata %>%
+  ggplot(aes(x = sl_area, y = abund, fill = fgraze)) +
+  geom_ribbon(aes(ymin = lwr, ymax = upr), alpha = 0.2) +
+  geom_line(aes(col = fgraze)) +
+  geom_point(data = loyn, aes(col = fgraze)) +
+  coord_trans(x = "exp")
+  
+```
+However, this plot is incorrect, as it is not on the correct response scale. To do this, we can refit our model with scale(**scale=FALSE**) and it should remember what our original variables were. 
+
+```{r}
+newdata %>%
+  ggplot(aes(x = sl_area, y = abund, fill = fgraze)) +
+  geom_ribbon(aes(ymin = lwr, ymax = upr), alpha = 0.2) +
+  geom_line(aes(col = fgraze)) +
+  geom_point(data = loyn, aes(col = fgraze))
+  # coord_trans(x = "exp")
+
+```
+
+To avoid negative values, update to Gamma family
+
+```{r}
+loyn.glm2a <- glm(abund ~ scale(log(area), scale=FALSE) * fgraze,
+                     data = loyn, family = Gamma(link = "log"))
+loyn.grid <- with(loyn,
+                  list(fgraze = levels(fgraze),
+                       area = seq_range(area, n=100)))
+newdata <- emmeans(loyn.glm2a, ~area|fgraze, at=loyn.grid, type = 'response') %>%
+  as.data.frame %>% rename(abund = response, lwr = asymp.LCL, upr = asymp.UCL)
+
+newdata %>%
+  ggplot(aes(x = area, y = abund, fill = fgraze)) +
+  geom_ribbon(aes(ymin = lwr, ymax = upr), alpha = 0.2) +
+  geom_line(aes(col = fgraze)) +
+  geom_point(data = loyn, aes(col = fgraze)) +
+  scale_x_log10(labels = scales::comma) +
+  scale_y_log10() +
+  labs(x = expression(Area~(m^2)), y = "Forest bird abundance")
+
+```
+
+
+
+
+
+
+
+
 
 # Further analyses {.tabset .tabset-faded}
+
+# References
 
