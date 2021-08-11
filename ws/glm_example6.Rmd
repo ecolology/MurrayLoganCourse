@@ -39,6 +39,8 @@ mathfont: LiberationMono
 monofont: DejaVu Sans Mono
 classoption: a4paper
 bibliography: ../resources/references.bib
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r setup, include=FALSE, warnings=FALSE, message=FALSE}
@@ -67,6 +69,7 @@ library(performance) #for residuals diagnostics
 library(see)         #for plotting residuals
 library(patchwork) #grid of plots
 library(scales)    #for more scales
+theme_set(theme_light())
 ```
 
 # Scenario
@@ -85,7 +88,7 @@ and season combination.
 
 Format of quinn.csv data files
 
-SEASON   DENSITY   RECRUITS   SQRTRECRUITS   GROUP
+season   density   recruits   sqrtrecruits   group
 -------- --------- ---------- -------------- ------------
 Spring   Low       15         3.87           SpringLow
 ..       ..        ..         ..             ..
@@ -99,10 +102,10 @@ Autumn   Low       14         3.74           AutumnLow
 ..       ..        ..         ..             ..
 
 ------------------ --------------------------------------------------------------------------------------------
-**SEASON**         Categorical listing of Season in which mussel clumps were collected ­ independent variable
-**DENSITY**        Categorical listing of the density of mussels within mussel clump ­ independent variable
-**RECRUITS**       The number of mussel recruits ­ response variable
-**SQRTRECRUITS**   Square root transformation of RECRUITS - needed to meet the test assumptions
+**season**         Categorical listing of Season in which mussel clumps were collected ­ independent variable
+**density**        Categorical listing of the density of mussels within mussel clump ­ independent variable
+**recruits**       The number of mussel recruits ­ response variable
+**SQRTRECRUITS**   Square root transformation of recruits - needed to meet the test assumptions
 **GROUPS**         Categorical listing of Season/Density combinations - used for checking ANOVA assumptions
 ------------------ --------------------------------------------------------------------------------------------
 
@@ -111,17 +114,21 @@ Autumn   Low       14         3.74           AutumnLow
 # Read in the data
 
 ```{r readData, results='markdown', eval=TRUE}
-quinn = read_csv('../data/quinn.csv', trim_ws=TRUE)
+quinn = read_csv('../data/quinn.csv', trim_ws=TRUE) %>%
+  janitor::clean_names()
 glimpse(quinn)
 summary(quinn)
 ```
 
-Since we intend to model both SEASON and DENSITY as categorical variables, 
+Since we intend to model both season and density as categorical variables, 
 we need to explicitly declair them as factors.
 
 ```{r dataprep, results='markdown', eval=TRUE, hidden=TRUE}
-quinn = quinn %>% mutate(SEASON = factor(SEASON, levels=c('Spring', 'Summer', 'Autumn', 'Winter')),
-                         DENSITY = factor(DENSITY))
+quinn <- quinn %>% janitor::clean_names() %>%
+  mutate(season = factor(season, 
+                         levels=c('Spring', 'Summer', 
+                                  'Autumn', 'Winter')),
+         density = factor(density))
 ```
 
 # Exploratory data analysis
@@ -138,7 +145,7 @@ where $\boldsymbol{\beta}$ is a vector of effects parameters and $\bf{X}$
 is a model matrix representing the intercept and effects of season, density and their interaction on mussel recruitment.
 
 ```{r eda, hidden=TRUE}
-ggplot(quinn, aes(y=RECRUITS, x=SEASON, fill=DENSITY)) +
+ggplot(quinn, aes(y=recruits, x=season, fill=density)) +
      geom_boxplot()
 ```
 
@@ -155,7 +162,7 @@ ggplot(quinn, aes(y=RECRUITS, x=SEASON, fill=DENSITY)) +
 Lets mimic the effect of using a log link, by using log scaled y-axis.
 
 ```{r eda1, hidden=TRUE}
-ggplot(quinn, aes(y=RECRUITS, x=SEASON, fill=DENSITY)) +
+ggplot(quinn, aes(y=recruits, x=season, fill=density)) +
   geom_boxplot() +
   scale_y_log10()
 ```
@@ -188,17 +195,17 @@ ggplot(quinn, aes(y=RECRUITS, x=SEASON, fill=DENSITY)) +
 
 ```{r zeroinflate, results='markdown', eval=TRUE, hidden=TRUE}
 library(pscl)
-quinn.zip <- zeroinfl(RECRUITS ~ DENSITY*SEASON | 1, data=quinn,  dist='poisson')
+quinn.zip <- zeroinfl(recruits ~ density*season | 1, data=quinn,  dist='poisson')
 #quinn.resid <- simulateResiduals(quinn.zip,  plot=TRUE)
 summary(quinn.zip)
 #tidy(quinn.zip,  conf.int=TRUE, exponentiate = TRUE)
 exp(-3.0037)
-quinn.zip1 <- zeroinfl(RECRUITS ~ DENSITY*SEASON | SEASON, data=quinn,  dist='poisson')
+quinn.zip1 <- zeroinfl(recruits ~ density*season | season, data=quinn,  dist='poisson')
                                         #quinn.resid <- simulateResiduals(quinn.zip)
 summary(quinn.zip1)
 exp(-3.0037)
 
-quinn.zinb <- zeroinfl(RECRUITS ~ DENSITY*SEASON | 1, data=quinn,  dist='negbin')
+quinn.zinb <- zeroinfl(recruits ~ density*season | 1, data=quinn, dist='negbin')
 AICc(quinn.zip,  quinn.zinb)
 
 summary(quinn.zinb)

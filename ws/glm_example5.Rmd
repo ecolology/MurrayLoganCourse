@@ -39,6 +39,8 @@ mathfont: LiberationMono
 monofont: DejaVu Sans Mono
 classoption: a4paper
 bibliography: ../resources/references.bib
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r setup, include=FALSE, warnings=FALSE, message=FALSE}
@@ -67,6 +69,7 @@ library(see)         #for plotting residuals
 library(DHARMa)    #for residual diagnostics plots
 library(patchwork) #grid of plots
 library(scales)    #for more scales
+theme_set(theme_classic())
 ```
 
 # Scenario
@@ -84,7 +87,7 @@ number of newly recruited barnacles on each plot after 4 weeks.
 
 Format of day.csv data files
 
-TREAT   BARNACLE
+treat   barnacle
 ------- ----------
 ALG1    27
 ..      ..
@@ -96,8 +99,8 @@ S       12
 ..      ..
 
 -------------- ----------------------------------------------------------------------------------------------------------------------------------------------
-**TREAT**      Categorical listing of surface types. ALG1 = algal species 1, ALG2 = algal species 2, NB = naturally bare surface, S = scraped bare surface.
-**BARNACLE**   The number of newly recruited barnacles on each plot after 4 weeks.
+**treat**      Categorical listing of surface types. ALG1 = algal species 1, ALG2 = algal species 2, NB = naturally bare surface, S = scraped bare surface.
+**barnacle**   The number of newly recruited barnacles on each plot after 4 weeks.
 -------------- ----------------------------------------------------------------------------------------------------------------------------------------------
 
 # Read in the data
@@ -108,8 +111,8 @@ specifically declare it as such straight after importing the data.
 ```{r readData, results='markdown', eval=TRUE}
 day = read_csv('../data/day.csv', trim_ws=TRUE)
 glimpse(day)
-day <- day %>%
-  mutate(TREAT = factor(TREAT))
+day <- day %>% janitor::clean_names() %>%
+  mutate(treat = fct_relevel(treat, c("NB", "S", "ALG1", "ALG2")))
 ```
 
 
@@ -124,33 +127,95 @@ $$
 where $\boldsymbol{\beta}$ is a vector of effects parameters and $\bf{X}$ is a model matrix representing the intercept and treatment contrasts for the effects of Treatment on barnacle recruitment.
 
 ```{r EDA, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=8, hidden=TRUE}
-ggplot(day, aes(y=BARNACLE, x=TREAT)) +
+ggplot(day, aes(y=barnacle, x=treat)) +
     geom_boxplot()+
     geom_point(color='red')
-ggplot(day, aes(y=BARNACLE, x=TREAT)) +
+ggplot(day, aes(y=barnacle, x=treat)) +
     geom_violin()+
     geom_point(color='red')
 ```
 
 # Fit the model
+```{r}
+day_mod <- glm(barnacle ~ treat, data = day, family = poisson(link = "log"))
+```
 
 
 # Model validation {.tabset .tabset-faded}
+```{r}
+autoplot(day_mod, which = 1:6)
+DHARMa::simulateResiduals(day_mod, plot=T)
+```
 
+All looks good!
+
+Cook's d is not needed if you only have categorical predictors
 
 # Partial plots {.tabset .tabset-faded}
+```{r}
+plot_model(day_mod, type = 'eff')
+```
 
 
 # Model investigation / hypothesis testing {.tabset .tabset-faded}
+```{r}
+summary(day_mod)
+exp(2.7081)
+exp(2.7081 + -0.1278)
+exp(2.7081 + 0.4010)
+exp(2.7081 + 0.6383)
+```
+exp(2.7081) = 15.0 is the number of barnacles in the NB treatment
+13.2 is the number of barnacles in the S treatment (also exp(-0.1278) is the factor or fractional difference)
+22.4 is the number of barnacles in the ALG1 treatment
+28.4 is the number of barnacles in the ALG2 treatment
+
+```{r}
+tidy(day_mod, confint = T)
+tidy(day_mod, confint = T, exponentiate = T)
+# fancy table:
+# sjPlot::tab_model(day_mod, show.se = T, show.aic = T)
+
+```
 
 
 # Predictions {.tabset .tabset-faded}
+```{r}
+day_mod %>% emmeans(~treat, type = 'response') %>% plot(add.data=T)
+```
 
 
 ## Post-hoc test (Tukey's)
+```{r}
+emmeans(day_mod, pairwise~treat)
+
+emmeans(day_mod, pairwise~treat, type = 'response')
+# emmeans(day_mod, ~treat) %>% pairs() %>% confint() # similar to second table
+1/0.465 # ALG2 / S
+```
+ALG2 is 2.15 times more than S
+
+```{r}
+emmeans(day_mod, ~ treat) %>% # get differences
+  regrid() %>%  # does backtransform of the differences BEFORE pair-wise comparisons
+  pairs %>% # get pair-wise absolute values of differences
+  confint() # get confidence interval limits for these differences
+```
+ALG2 has 13.4 more units of barnacles than NB
+ALG1 has 7.4 more units of barnacles than NB
+ALG2 has 15.2 more units of barnacles than S
+ALG1 has 9.2 more units of barnacles than S
+
 
 
 ## Planned contrasts
+```{r}
+emmeans(day_mod, ~ treat) %>%
+  regrid() %>%
+  pairs() %>%
+  confint()
+```
+
 
 Define your own
 
@@ -159,6 +224,15 @@ Compare:
 a) ALG1 vs ALG2
 b) NB vs S
 c) average of ALG1+ALG2 vs NB+S
+
+Two rules to planned contrasts: 
+
+1. Can only use # groups - 1 planned comparisons
+2. Each of these comparisons must be independent of one another
+
+```{r}
+
+```
 
 
 # Summary figures {.tabset .tabset-faded}
