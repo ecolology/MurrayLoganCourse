@@ -39,6 +39,8 @@ mathfont: LiberationMono
 monofont: DejaVu Sans Mono
 classoption: a4paper
 bibliography: ../resources/references.bib
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r setup, include=FALSE, warnings=FALSE, message=FALSE}
@@ -64,6 +66,7 @@ library(DHARMa)    #for assessing dispersion etc
 library(glmmTMB)    #for glmmTMB
 library(performance) #for diagnostic plots
 library(see)         #for diagnostic plots
+theme_set(theme_classic())
 ```
 
 # Scenario

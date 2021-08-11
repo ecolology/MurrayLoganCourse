@@ -39,6 +39,8 @@ mathfont: LiberationMono
 monofont: DejaVu Sans Mono
 classoption: a4paper
 bibliography: ../resources/references.bib
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r setup, include=FALSE, warnings=FALSE, message=FALSE}
@@ -70,6 +72,7 @@ library(see)         #for plotting residuals
 library(glmmTMB)   #for glmmTMB
 library(DHARMa)   #for residuals and diagnostics
 library(tidyverse) #for data wrangling
+theme_set(theme_classic())
 ```
  
 # Scenario
@@ -82,7 +85,7 @@ A plant pathologist wanted to examine the effects of two different strengths of 
 
 Format of tobacco.csv data files
 
-LEAF   TREAT    NUMBER
+leaf   treat    number
 ------ -------- --------
 1      Strong   35.898
 1      Week     25.02
@@ -93,16 +96,19 @@ LEAF   TREAT    NUMBER
 \...   \...     \...
 
 ------------ ----------------------------------------------------------------------------------------------------
-**LEAF**     The blocking factor - Factor B
-**TREAT**    Categorical representation of the strength of the tobacco virus - main factor of interest Factor A
-**NUMBER**   Number of lesions on that part of the tobacco leaf - response variable
+**leaf**     The blocking factor - Factor B
+**treat**    Categorical representation of the strength of the tobacco virus - main factor of interest Factor A
+**number**   Number of lesions on that part of the tobacco leaf - response variable
 ------------ ----------------------------------------------------------------------------------------------------
 
 
 # Read in the data
 
 ```{r readData, results='markdown', eval=TRUE}
-tobacco = read_csv('../data/tobacco.csv', trim_ws=TRUE)
+tobacco <- read_csv('../data/tobacco.csv', trim_ws=TRUE) %>%
+  janitor::clean_names() %>% rename(treat = treatment) %>%
+  mutate(leaf = factor(leaf),
+         treat = fct_rev(treat))
 glimpse(tobacco)
 ```
 
@@ -120,40 +126,45 @@ where $\boldsymbol{\beta}$ and $\boldsymbol{\gamma}$ are vectors of the fixed an
 and $\bf{X}$ is the  model matrix representing the overall intercept and effects of the treatment on the number of lesions.
 $\bf{Z}$ represents a cell means model matrix for the random intercepts associated with leaves.
 
-We will start by explicitly declaring the categorical variable (TREATMENT) as a
-factor.  In addition, random effects (in this case LEAF) should also be declared
+We will start by explicitly declaring the categorical variable (treat) as a
+factor.  In addition, random effects (in this case leaf) should also be declared
 as factors.
 
 ```{r tobaccoEDA1, results='markdown', eval=TRUE, hidden=TRUE}
-tobacco = tobacco %>%
-  mutate(LEAF=factor(LEAF),
-         TREATMENT=factor(TREATMENT))
+# already done above
+# tobacco = tobacco %>%
+#   mutate(leaf=factor(leaf),
+#          treat=factor(treat))
 ```
 
 To explore the assumptions of homogeneity of variance and normality, a boxplot
 of each Treatment level is appropriate.
 
 ```{r tobaccoEDA2, results='markdown', eval=TRUE, hidden=TRUE}
-ggplot(tobacco,  aes(y=NUMBER,  x=TREATMENT)) +
-  geom_boxplot()
+ggplot(tobacco,  aes(y=number,  x=treat)) +
+  geom_boxplot() +
+  labs(x = "Treatment", y = "Legion count")
 ```
+
+This leads us to say that we think we can get away with a gaussian distribution, despite the two outliers in the strong treatment
 
 **Conclusions:**
 
 - both normality and homogeneity of variance seem satisfied
 
-It can also be useful to get a sense of the consistency across blocks (LEAF).
-That is, do all Leaves have a similar baseline level of lesion susceptibility
+It can also be useful to get a sense of the consistency across blocks (leaf).
+That is, do all leaves have a similar baseline level of lesion susceptibility
 and do they respond similarly to the treatment.
 
+## Another good plot for random effects across treatments:
 ```{r tobaccoEDA3, results='markdown', eval=TRUE, hidden=TRUE}
-ggplot(tobacco,  aes(y=NUMBER,  x=as.numeric(LEAF))) +
-  geom_line(aes(linetype=TREATMENT))
+ggplot(tobacco,  aes(y=number,  x=as.numeric(leaf))) +
+  geom_line(aes(linetype=treat))
 
-## If we want to retain the original LEAF labels
-ggplot(tobacco,  aes(y=NUMBER,  x=as.numeric(LEAF))) +
-  geom_blank(aes(x=LEAF)) +
-  geom_line(aes(linetype=TREATMENT))
+## If we want to retain the original leaf labels
+ggplot(tobacco,  aes(y=number,  x=as.numeric(leaf))) +
+  geom_blank(aes(x=leaf)) +
+  geom_line(aes(linetype=treat))
 ```
 
 **Conclusions:**
@@ -169,10 +180,12 @@ easier to visualise the differences in baselines and effect consistency by
 plotting as:
 
 ```{r tobaccoEDA4, results='markdown', eval=TRUE, hidden=TRUE}
-ggplot(tobacco,  aes(y=NUMBER,  x=TREATMENT,  group=LEAF)) +
+ggplot(tobacco,  aes(y=number,  x=treat,  group=leaf)) +
   geom_point() +
-  geom_line(aes(x=as.numeric(TREATMENT))) 
+  geom_line(aes(x=as.numeric(treat))) 
 ```
+
+'group' works similar to 'by', just that group is more versatile when it comes to mapping, etc. because it will automatically group by polygon, while by needs a named list as input. Otherwise, they work very similarly.
 
 **Conclusions:**
 
@@ -181,8 +194,8 @@ ggplot(tobacco,  aes(y=NUMBER,  x=TREATMENT,  group=LEAF)) +
 
 The above figure also serves as a good way to visualise certain aspects of mixed
 effects models.  When we fit a mixed effects model that includes a random
-blocking effect (in this case LEAF), we are indicating that we are allowing
-there to be a different intercept for each block (LEAF).  In the current case,
+blocking effect (in this case leaf), we are indicating that we are allowing
+there to be a different intercept for each block (leaf).  In the current case,
 the intercept will represent the first Treatment level (Strong).  So the random
 effect is specifying that the intercept can vary from Leaf to Leaf.
 
@@ -191,6 +204,8 @@ the hierarchy represent progressively smaller (typically) spatial scales.  In
 the current example, the largest spatial units are the leaves (blocking factor).
 Within the leaves, there are the two Treatments (Strong and Weak) and within the
 Treatments are the individual observations.
+
+**Note:** We can allow this, but also the model will tell us if this is unnecessary. If all the lines were parallel, we for sure would only need random intercepts.
 
 We tend to represent this hierarchy upside down in the model formula:
 

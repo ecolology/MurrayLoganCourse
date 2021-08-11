@@ -230,12 +230,62 @@ Two rules to planned contrasts:
 1. Can only use # groups - 1 planned comparisons
 2. Each of these comparisons must be independent of one another
 
+
+
 ```{r}
+cmat <- cbind('Alg1_Alg2' = c(1, -1, 0, 0),
+              'NB_S' = c(0, 0, 1, -1),
+              'Alg_Bare' = c(0.5, 0.5, -0.5, -0.5))
+```
+Need to check that they're all independent
+```{r}
+crossprod(cmat) #each column against each other column
+day_mod %>%
+  emmeans(~treat, contr = list(treat = cmat), type = 'response') #'response' to transform
+
+day_mod %>%
+  emmeans(~treat) %>%
+  regrid() %>%
+  contrast(list(TREAT = cmat))
 
 ```
 
 
 # Summary figures {.tabset .tabset-faded}
+```{r}
+newdata <- emmeans(day_mod, ~treat, type = 'response') %>%
+  as.data.frame() %>% 
+  rename(barnacle = rate, lwr = asymp.LCL, upr = asymp.UCL)
+
+ggplot(newdata, aes(y = barnacle, x = treat)) +
+  geom_pointrange(aes(ymin = lwr, ymax = upr)) +
+  geom_jitter(data = day, col="red", height = 0, width=0.1)
+
+newdata_planned <- day_mod %>% 
+  emmeans(~treat) %>% 
+  regrid() %>%
+  contrast(list(treat = cmat)) %>%
+  confint() %>%
+  rename(lwr = asymp.LCL, upr = asymp.UCL)
+
+ggplot(data = newdata_planned, aes(y = estimate, x = contrast)) + 
+  geom_hline(yintercept = 0, linetype = 'dashed') + 
+  geom_pointrange(aes(ymin = lwr, ymax = upr)) + 
+  theme_classic() +
+  coord_flip()
+
+```
+
+Ways of doing multiple plots with inset 'a' and 'b's:
+```{r}
+# 
+# (g1 + ggtitle('a)')) + (g2 + ggtitle('b)'))
+#OR
+# g1 + annotate(geom = 'text', y = Inf, x = -Inf, label = 'a)', 
+#               hjust = -0.5, vjust = 1)
+```
+
+
 
 
 # References

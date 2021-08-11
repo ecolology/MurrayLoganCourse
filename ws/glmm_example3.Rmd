@@ -39,12 +39,15 @@ mathfont: LiberationMono
 monofont: DejaVu Sans Mono
 classoption: a4paper
 bibliography: ../resources/references.bib
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r setup, include=FALSE, warnings=FALSE, message=FALSE}
 knitr::opts_chunk$set(echo = TRUE, warning=FALSE, message=FALSE)
 options(tinytex.engine = 'xelatex')
 ```
+
 ```{r customEngine, results='markdown', eval=TRUE, echo=FALSE, hidden=TRUE}
 copy_img = function(path,  options) {
   print(path)
@@ -144,6 +147,7 @@ library(glmmTMB)   #for glmmTMB
 library(DHARMa)   #for residuals and diagnostics
 library(performance) #for diagnostic plots
 library(see)         #for diagnostic plots
+theme_set(theme_classic())
 ```
 
 # Scenario

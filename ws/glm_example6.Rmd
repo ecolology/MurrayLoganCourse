@@ -102,11 +102,11 @@ Autumn   Low       14         3.74           AutumnLow
 ..       ..        ..         ..             ..
 
 ------------------ --------------------------------------------------------------------------------------------
-**season**         Categorical listing of Season in which mussel clumps were collected ­ independent variable
-**density**        Categorical listing of the density of mussels within mussel clump ­ independent variable
-**recruits**       The number of mussel recruits ­ response variable
-**SQRTRECRUITS**   Square root transformation of recruits - needed to meet the test assumptions
-**GROUPS**         Categorical listing of Season/Density combinations - used for checking ANOVA assumptions
+**season**         Categorical listing of Season in which mussel clumps were collected - independent variable
+**density**        Categorical listing of the density of mussels within mussel clump - independent variable
+**recruits**       The number of mussel recruits - response variable
+**sqrtrecruits**   Square root transformation of recruits - needed to meet the test assumptions
+**groups**         Categorical listing of Season/Density combinations - used for checking ANOVA assumptions
 ------------------ --------------------------------------------------------------------------------------------
 
 ![Mussel](../resources/mussels.jpg){height="300"}
@@ -173,17 +173,83 @@ ggplot(quinn, aes(y=recruits, x=season, fill=density)) +
 
 
 # Fit the model {.tabset .tabset-faded}
+```{r}
+quinn.glmG <- glm(log(RECRUITS + 1) ~ DENSITY*SEASON, data = quinn, family = gaussian)
+quinn.glm <- glm(RECRUITS ~ DENSITY*SEASON, data = quinn, family = poisson(link = 'log'))
+```
 
 
 # Model validation {.tabset .tabset-faded}
+```{r}
+autoplot(quinn.glm, which = 1:6)
+```
+Cook's D is off, so although residuals and QQ are fine, there's something wrong with the model
+```{r}
+quinn.resid <- simulateResiduals(quinn.glm, plot = TRUE)
+```
+Problem with deviance = More variance than we should expect
+Model is overdispersed so the model is not reliable: potential because this si real data and there are more variables that explain recruitment, not just our variables. We can add an 'unit level random effect' to our model = add a variable that makes each variable unique and 'soaks' some of the variance. It will take one DF and shrinks the other estimates, making them less obvious.
+Maybe some of the zeros are not actually zeros because the recruits were to small to be counted (zero inflated model).
 
+Can also test for dispersion:
+```{r}
+testDispersion(quinn.resid) #red line is your supposed actual disperision, the histogram is what it actually should be
+performance::check_overdispersion(quinn.glm) #3.309 = 3x more variable that there would normally be
+```
+Diagnosis = overdispersersion in the model (3x)
+
+```{r}
+testZeroInflation(quinn.resid)
+performance::check_zeroinflation(quinn.glm) #shows only 2 extra zeros than expected
+```
+Checking for overdispersion and zero inflation together actually provides a better picture. It showed that the model is overdispersed but it then showed that it's not really zero inflated as 2 zeros are not much.
 
 # Different model {.tabset .tabset-faded}
+We'll fit a negative binomial by dividing data into zeros and ones.
+```{r}
+quinn.nb <- MASS::glm.nb(RECRUITS ~ DENSITY*SEASON, data = quinn)
+quinn.resid <- simulateResiduals(quinn.nb, plot = TRUE)
+```
+Compare:
+```{r}
+AICc(quinn.glm, quinn.nb)
+```
 
 # Parial plots {.tabset .tabset-faded}
-
+```{r}
+plot_model(quinn.nb, type = 'eff', terms = c('SEASON', 'DENSITY'))
+```
 
 # Model investigation / hypothesis testing {.tabset .tabset-faded}
+```{r}
+summary(quinn.nb) #it's on a log-scale
+
+tidy(quinn.nb, conf.int = TRUE, exponentiate = TRUE)
+```
+
+N.B. if the model isn't balanced, an ANOVA table will change the outputs depending on the order of the variables
+
+Can use emmeans to do a pairwise to see the effect of each season
+```{r}
+emmeans(quinn.nb, pairwise ~ DENSITY|SEASON, type = 'response')
+
+#on an absolute scale instead of fractional:
+emmeans(quinn.nb, ~DENSITY|SEASON) %>%
+  regrid() %>%
+  pairs()
+
+newdata <- emmeans(quinn.nb, ~DENSITY|SEASON, type = 'response') %>% 
+  as.data.frame()
+
+ggplot(data = newdata, mapping = aes(y = response, x = SEASON, fill = DENSITY)) + 
+  geom_pointrange(aes(ymin = asymp.LCL, ymax = asymp.UCL, 
+                      shape = DENSITY),
+                  position = position_dodge(width = 0.1)) + #so that they don't overlap
+  theme_classic() +
+  theme(axis.title.x = element_blank(),
+        legend.position = c(0.01, 1), legend.justification =  c(0, 1)) +
+  scale_shape_manual(values = c(21, 22))
+```
 
 
 # Predictions
@@ -191,25 +257,24 @@ ggplot(quinn, aes(y=recruits, x=season, fill=density)) +
 
 # Summary figures
 
-
-
+Fitting a zero inflated model:
 ```{r zeroinflate, results='markdown', eval=TRUE, hidden=TRUE}
 library(pscl)
-quinn.zip <- zeroinfl(recruits ~ density*season | 1, data=quinn,  dist='poisson')
-#quinn.resid <- simulateResiduals(quinn.zip,  plot=TRUE)
+quinn.zip <- zeroinfl(RECRUITS ~ DENSITY*SEASON | 1, data=quinn,  dist='poisson') #the "|1" fits basically a null model
+#quinn.resid <- simulateResiduals(quinn.zip,  plot=TRUE) does not support zero inflated models
 summary(quinn.zip)
+plogis(-3) #approximately 5% of zeros are not real zeros (-3 comes from the zero inflation model coefficients estimate), 5% is a small possibility and it makes sense according to our previous analyses
 #tidy(quinn.zip,  conf.int=TRUE, exponentiate = TRUE)
 exp(-3.0037)
-quinn.zip1 <- zeroinfl(recruits ~ density*season | season, data=quinn,  dist='poisson')
-                                        #quinn.resid <- simulateResiduals(quinn.zip)
+
+quinn.zip1 <- zeroinfl(RECRUITS ~ DENSITY*SEASON | SEASON, data=quinn,  dist='poisson') #was the rate any different in different seasons? ('|SEASON')
 summary(quinn.zip1)
 exp(-3.0037)
 
-quinn.zinb <- zeroinfl(recruits ~ density*season | 1, data=quinn, dist='negbin')
+quinn.zinb <- zeroinfl(RECRUITS ~ DENSITY*SEASON | 1, data=quinn,  dist='negbin')
 AICc(quinn.zip,  quinn.zinb)
 
 summary(quinn.zinb)
-exp(-15.29)
+exp(-15.29) #none of them are false zeros because the negative binomial already handled the small amount of zeros
 ```
-
 # References
