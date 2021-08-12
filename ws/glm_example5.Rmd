@@ -231,21 +231,30 @@ Two rules to planned contrasts:
 2. Each of these comparisons must be independent of one another
 
 ```{r}
-cmat <- cbind('Alg1_Alg2' = c(1, -1, 0, 0),
+cmat <- cbind('Alg1_Alg2' = c(-1, 1, 0, 0),
               'NB_S' = c(0, 0, 1, -1),
               'Alg_Bare' = c(0.5, 0.5, -0.5, -0.5))
+cmat
+colSums(cmat) # need to sum to zero
 ```
-Need to check that they're all independent
+
+It is 0.5 because you want the average of ALG1 and ALG2
+
+Need to check that they're all independent. To do so, we look to see if they are multiplied together, the off diagonals should sum to zero.
+
 ```{r}
 crossprod(cmat) #each column against each other column
+```
+
+```{r}
 day_mod %>%
-  emmeans(~treat, contr = list(treat = cmat), type = 'response') #'response' to transform
+  emmeans(~treat, contr = list(treat = cmat), type = 'response') #'ratio'  is on the log scale
 
 day_mod %>%
   emmeans(~treat) %>%
   regrid() %>%
-  contrast(list(TREAT = cmat))
-
+  contrast(list(symbiont = cmat))
+# back-transformed differences
 ```
 
 

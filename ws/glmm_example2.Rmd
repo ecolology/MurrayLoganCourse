@@ -157,6 +157,7 @@ norin %>%
 We can see that mass doesn't seem to affect change much.
 
 We can add in mass as an offset - doesn't cost any df, but does soak up the additional variance associated. HOWEVER, it assumes the effect of mass is a 1:1 effect on response. Obviously this is not the case here.
+
 Density is the classic example for using offset. Instead of counts, we can put it in as an offset.
 
 
@@ -262,7 +263,7 @@ Using emmeans:
 ```{r}
 norin_lmm4 %>% ggemmeans(~smr_contr|trial) %>% plot(add.data=T) # assumes no interaction
 ```
-**Note:** that ggemmeans seems to cause errors with the x-axis coordinates of the points! This seems to be an error!
+**Note:** that ggemmeans seems to cause errors with the x-axis coordinates of the points! This seems to be an error! Possibly doing a jitter, like in the plots with factors?
 
 
 # Model investigation / hypothesis testing {.tabset .tabset-faded}
@@ -335,14 +336,33 @@ norin_grid <- with(norin,
 newdata = emmeans(norin_lmm4, ~ smr_contr|trial, at = norin_grid) %>%
   as.data.frame() %>%
   rename(change = emmean, lwr = lower.CL, upr = upper.CL)
-newdata %>%
+
+(g1 <- newdata %>%
   ggplot(aes(x = smr_contr, y = change)) +
   geom_ribbon(aes(ymin = lwr, ymax = upr, fill = trial), alpha = 0.3) +
   geom_line(aes(color = trial)) +
   theme(legend.position = c(0.99, 0.99),
-        legend.justification = c(1,1)) +
-  geom_point(data = norin, aes(col = trial)) # apparently is bad?
+        legend.justification = c(1,1)))
+  # geom_point(data = norin, aes(col = trial)) # apparently is bad?
+
 ```
+However, we can't add the plot the same way, as the model data values are standardized in a specific way according to the random effect
+
+Thus, we have to add data a different way...
+Step 1. Get predicted value for each individual via augment
+Step 2. Add on the x variables lost via augment
+Step 3. Add on residual value to obtain standardized values
+```{r}
+obs <- augment(norin_lmm4) %>% 
+  bind_cols(dplyr::select(norin, smr_contr)) %>%
+  mutate(partial_obs = .fitted + .resid)
+
+g1 + 
+  # geom_point(data = norin, aes(col = trial)) # looks the same, but in models where the other variables not being plotted explain a lot of the variation, will be drastically different!
+  geom_point(data = obs, aes(y = partial_obs, color = trial))
+```
+
+
 
 
 # References

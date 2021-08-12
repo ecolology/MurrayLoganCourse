@@ -156,9 +156,9 @@ theme_set(theme_classic())
 
 ![Sampling design](../resources/ws9.4aQ1.diag.png)
 
-Format of starling\_full.RSV data files
+Format of starling\_full.CSV data files
 
-SITUATION   MONTH   MASS   BIRD
+situation   month   mass   bird (random effect)
 ----------- ------- ------ -----------
 tree        Nov     78     tree1
 ..          ..      ..     ..
@@ -172,14 +172,14 @@ tree        Jan     85     tree1
 ..          ..      ..     ..
 
 --------------- ------------------------------------------------------------------------------
-**SITUATION**   Categorical listing of roosting situations (tree, nest-box, inside or other)
-**MONTH**       Categorical listing of the month of sampling.
-**MASS**        Mass (g) of starlings.
-**BIRD**        Categorical listing of individual bird repeatedly sampled.
+**situation**   Categorical listing of roosting situations (tree, nest-box, inside or other)
+**month**       Categorical listing of the month of sampling.
+**mass**        Mass (g) of starlings.
+**bird**        Categorical listing of individual bird repeatedly sampled.
 --------------- ------------------------------------------------------------------------------
 
 
-```{tikz samplingDesign, engine='tikz', results='markdown', echo=FALSE, eval=TRUE, hidden=TRUE, engine.opts = list(template = "../resources/tikz-standalone.tex"), out.width=700, fig.ext='png', include=FALSE, copy_tikz_img=TRUE,fig.process=copy_img}
+```{tikz samplingDesign, engine='tikz', results='markdown', echo=FALSE, eval=F, hidden=TRUE, engine.opts = list(template = "../resources/tikz-standalone.tex"), out.width=700, fig.ext='png', include=FALSE, copy_tikz_img=TRUE,fig.process=copy_img}
 \tikzstyle{Messy} = [decorate,decoration={random steps,segment length=3pt, amplitude=0.3pt},thick]
 \setmainfont[ExternalLocation=../resources/]{desyrel}
 \begin{tikzpicture}[every node/.style={draw,Messy,fill=blue!20},
@@ -257,18 +257,14 @@ That said, with only two time points, autocorrelation is not possible.
 # Read in the data
 
 ```{r readData, results='markdown', eval=TRUE}
-starling = read_csv('../data/starling_full.csv', trim_ws=TRUE)
+starling <- read_csv('../data/starling_full.csv', trim_ws=TRUE) %>%
+  janitor::clean_names() %>%
+  mutate(month = factor(month, levels = c('Nov','Jan')),
+         situation=factor(situation),
+         bird = factor(bird))
 glimpse(starling)
 ```
 
-Lets prepare the data:
-
-```{r dataPrep, results='markdown', eval=TRUE, hidden=TRUE}
-starling = starling %>% mutate(MONTH=factor(MONTH,levels=c('Nov','Jan')),
-                               SITUATION=factor(SITUATION),
-                               BIRD=factor(BIRD)
-                               )
-```
 
 # Exploratory data analysis
 
@@ -285,14 +281,14 @@ $\bf{Z}$ represents a cell means model matrix for the random intercepts associat
 ## Exploratory data analysis
 
 ```{r eda1, results='markdown', eval=TRUE, hidden=TRUE}
-ggplot(starling, aes(y=MASS, x=MONTH)) +
+ggplot(starling, aes(y=mass, x=month)) +
     geom_boxplot() +
-    facet_grid(~SITUATION)
+    facet_grid(~situation)
 ## Better still
-ggplot(starling, aes(y=MASS, x=MONTH, group=BIRD)) +
+ggplot(starling, aes(y=mass, x=month, group=bird)) +
     geom_point() +
     geom_line() +
-    facet_grid(~SITUATION) 
+    facet_grid(~situation) 
 ```
 
 **Conclusions:**
@@ -302,18 +298,86 @@ ggplot(starling, aes(y=MASS, x=MONTH, group=BIRD)) +
   different per bird - perhaps random intercept/random slope
 
 # Fit the model {.tabset .tabset-faded}
+## Fixed effects
+```{r}
+# Note: optimizer fails for better optimizer (Nelder-Mead)
+better_opt <- glmmTMBControl(optimizer = "optim",
+               optArgs = "Nelder-Mead")
+starling_lmm1 <- glmmTMB(mass ~ month*situation + (1|bird), data = starling, 
+                         REML=F, control = better_opt)
+starling_lmm2 <- glmmTMB(mass ~ month + situation + (1|bird), data = starling, 
+                         REML=F, control = better_opt)
 
+
+starling_lmm1 <- glmmTMB(mass ~ month*situation + (1|bird), data = starling, 
+                         REML=F)
+starling_lmm2 <- glmmTMB(mass ~ month + situation + (1|bird), data = starling, 
+                         REML=F)
+starling_lmm3 <- glmmTMB(mass ~ month + (1|bird), data = starling, 
+                         REML=F)
+starling_lmm4 <- glmmTMB(mass ~ situation + (1|bird), data = starling, 
+                         REML=F)
+starling_lmm5 <- glmmTMB(mass ~ 1 + (1|bird), data = starling, 
+                         REML=F)
+
+AICc(starling_lmm1, starling_lmm2, starling_lmm3, starling_lmm4, starling_lmm5) %>%
+  arrange(AICc)
+```
+
+## Random effects:
+```{r}
+
+starling_lmm2a <- glmmTMB(mass ~ month + situation + (1|bird), data = starling, REML=T)
+starling_lmm2b <- glmmTMB(mass ~ month + situation + (month|bird), data = starling, REML=T)
+
+AICc(starling_lmm2a, starling_lmm2b) %>% arrange(AICc)
+# simpler is better
+```
 
 
 # Model validation {.tabset .tabset-faded}
 
+```{r}
+plot_model(starling_lmm2a, type = 'diag')[-2] %>% plot_grid()
+
+starling_lmm2a %>% simulateResiduals(plot=T)
+```
+
 
 # Partial plots {.tabset .tabset-faded}
+Two different ways:
+```{r}
+starling_lmm2a %>% ggemmeans(~situation|month) %>% plot(add.data=T)
+plot_model(starling_lmm2a, type = 'eff', terms = c("situation", "month"))
+```
+
 
 # Model investigation / hypothesis testing {.tabset .tabset-faded}
+```{r}
+summary(starling_lmm2a)
+tidy(starling_lmm2a, conf.int = T, effect='fixed')
+```
+
+The intercept of each bird has a variance of about 0.57, which is smaller relative to the residuals, which is 16.9.
+
+The mean mass of birds inside the tree in November is 78.85g
+The change from Nov -> Jan results in an increase of 9.1g on average
+The birds that roost in nest boxes are 1.4g heavier than inside birds (but not significantly different)
+The birds that roost in trees are 3.8g heavier than inside birds
+The birds that roost in other are 3.6g lighter than inside birds
+
 
 
 # Further analyses {.tabset .tabset-faded}
+```{r}
+emmeans(starling_lmm2a, pairwise ~ month)$emmeans
+emmeans(starling_lmm2a, pairwise ~ situation)$emmeans
+```
+
+```{r}
+r.squaredGLMM(starling_lmm2a)
+performance::r2_nakagawa(starling_lmm2a)
+```
 
 
 

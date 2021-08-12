@@ -78,7 +78,7 @@ theme_set(theme_classic())
 Some ornithologists were interested in the degree of sibling negotiations in owl
 chicks.  Specifically, they wanted to explore how sibling negotiations were
 affected by feeding satiety and the sex of the parent returning to the nest.
-The ornithologists had accessed to a number of owl nests and were able to count
+The ornithologists had access to a number of owl nests and were able to count
 (via recording equipment) the number of sibling negotiations (calls) that the
 owl chicks made when the parent returned to the nest.
 
@@ -100,14 +100,67 @@ on the same set of siblings.
 # Read in the data
 
 ```{r readData, results='markdown', eval=TRUE}
-owls = read_csv('../data/owls.csv', trim_ws=TRUE)
+owls <- read_csv('../data/owls.csv', trim_ws=TRUE) %>%
+  janitor::clean_names()
+  
 glimpse(owls)
 ```
 
 # Data preparation
+Sibling negotiation is the total number of calls, our y-var
+Negotiations per chick is similarly a y-variable, but not as easy to model.
+
+This is similar to a density problem - brood size can be used as an offset on the total number of sibling negotiations, thus we don't have to resort to a gamma model.
+
+Note that brood size should go above each nest, as it applies to every nest the same
+The next factor down is nest proper (a random effect)
+Next is food, either the nests were deprived or not deprived (fixed effect)
+Finally, the sex of the parent
+Followed by the arrival time of the parent at that nest on that occasion
+
+```{r}
+owls <- owls %>%
+  mutate(nest = factor(nest), 
+         food = factor(food_treatment),
+         sex = factor(sex_parent),
+         ncalls = sibling_negotiation)
+```
+
 
 # Exploratory data analysis
 
+```{r}
+owls %>%
+  ggplot(aes(x = food, y = ncalls, col = sex)) +
+  geom_violin() +
+  geom_point(position=position_jitterdodge(jitter.height=0, dodge.width=0.9)) 
+  # geom_point(position = ggforce::position_jitternormal(sd_y = 0, sd_x = 0.1))
+```
+
+```{r}
+owls %>%
+  ggplot(aes(x = ncalls)) +
+  geom_histogram() +
+  facet_grid(food ~ sex)
+```
+Tons of zeros for the number of calls in satiated individuals - clearly satiated is important!
+
+If we want to use offset of brood size, need to show this 1:1 relationship!
+
+```{r}
+owls %>% 
+  ggplot(aes(y = ncalls, x = brood_size, color = sex)) +
+  geom_point() + 
+  geom_smooth(method = 'lm') +
+  facet_grid(~food) + 
+  scale_x_log10() +
+  scale_y_continuous(trans = scales::pseudo_log_trans()) +
+  geom_abline(aes(intercept = 0, slope = 1), linetype = "dashed")
+```
+
+`scales::pseudo_log_trans()` is good for dealing with zero-inflated values and still log it!
+
+**NB:** We will need to use log(brood_size to ensure it is 1:1 with ncalls (which when using a Poisson, uses a log-link)). 
 
 Model formula:
 $$
@@ -122,25 +175,24 @@ $\bf{Z}$ represents a cell means model matrix for the random intercepts associat
 
 
 # Fit the model {.tabset .tabset-faded}
+```{r}
+owls_glmm <- glmmTMB(ncalls ~ food + sex + offset(log(brood_size)) + (1|nest),
+        data = owls, REML=T)
+```
 
 
 # Model validation {.tabset .tabset-faded}
 
 
 
-# {-}
-<div class='HIDEN'>
-
 **Conclusions:**
 
 - there is evidence that the model does not fit that well. It is evidently zero
   inflated and possibly also overdispersed.
-- it would seem that a zero-inflated Poisson or even a zero-inflated Negative
-  Binomial would be a sensible next step.
-- zero-inflated models cannot be fit in `glmer()`, so we will proceed with
-`glmmTMB()` only.
+- it would seem that a zero-inflated Poisson or even a zero-inflated Negative  Binomial would be a sensible next step.
+- zero-inflated models cannot be fit in `glmer()`, so we will proceed with `glmmTMB()` only.
 
-</div>
+
 
 # Model refit and validation {.tabset .tabset-faded}
 
@@ -151,26 +203,23 @@ $\bf{Z}$ represents a cell means model matrix for the random intercepts associat
 ## plot_model
 
 ```{r partialPlots1a, results='markdown', eval=TRUE}
-plot_model(owls.glmmTMB4,  type='eff',  terms=c('FoodTreatment', 'SexParent'))
+plot_model(owls_glmm,  type='eff',  terms=c('FoodTreatment', 'SexParent'))
 ```
 
-These predictions appear to be based on the mean BroodSize of approximately
-`r round(mean(owls$BroodSize), 2)`.
+These predictions appear to be based on the mean BroodSize of approximately `r round(mean(owls$BroodSize), 2)`.
 
 ## allEffects
 
 ```{r partialPlots1b, results='markdown', eval=TRUE}
-plot(allEffects(owls.glmmTMB4), multiline=TRUE, ci.style='bars')
+plot(allEffects(owls_glmm), multiline=TRUE, ci.style='bars')
 ```
 
-These predictions also appear to be based on the mean BroodSize, although the
-documentation seems to suggest that `allEffects()` might not deal with the
-offsets the way we have used them (as a function in the formula) correctly.
+These predictions also appear to be based on the mean BroodSize, although the documentation seems to suggest that `allEffects()` might not deal with the offsets the way we have used them (as a function in the formula) correctly.
 
 ## ggpredict
 
 ```{r partialPlots1c, results='markdown', eval=TRUE}
-ggpredict(owls.glmmTMB4,  terms=c('FoodTreatment', 'SexParent')) %>% plot
+ggpredict(owls_glmm,  terms=c('FoodTreatment', 'SexParent')) %>% plot
 ```
 
 **This seems to deal with the offset incorrectly**.  For the purpose of
@@ -193,14 +242,14 @@ choices:
 #off<-owls %>% group_by(SexParent, FoodTreatment) %>% summarize(Mean=mean(BroodSize))
 off<-owls %>% summarize(Mean=mean(BroodSize))
 as.numeric(off)
-ggemmeans(owls.glmmTMB4,  ~FoodTreatment+SexParent, offset=log(off$Mean)) %>% plot
+ggemmeans(owls_glmm,  ~FoodTreatment+SexParent, offset=log(off$Mean)) %>% plot
 ```
 
 - set the offset to 0.  This results in predictions appropriate for a per owl
   chick conclusion.
 
 ```{r partialPlots1d2, results='markdown', eval=TRUE}
-ggemmeans(owls.glmmTMB4,  ~FoodTreatment+SexParent, offset=0) %>% plot
+ggemmeans(owls_glmm,  ~FoodTreatment+SexParent, offset=0) %>% plot
 ```
 
 
@@ -215,7 +264,7 @@ ggemmeans(owls.glmmTMB4,  ~FoodTreatment+SexParent, offset=0) %>% plot
 ```{r summaryFig1a, results='markdown', eval=TRUE, hidden=TRUE}
 owls.grid = with(owls, list(FoodTreatment=levels(FoodTreatment),
                             SexParent=levels(SexParent)))
-newdata = emmeans(owls.glmmTMB4, ~FoodTreatment+SexParent, at=owls.grid,
+newdata = emmeans(owls_glmm, ~FoodTreatment+SexParent, at=owls.grid,
                   offset=0, type='response') %>%
     as.data.frame
 head(newdata)
@@ -228,7 +277,7 @@ ggplot(newdata, aes(y=rate, x=FoodTreatment)) +
 ##OR if we want to express this for the average brood size
 owls.grid = with(owls, list(FoodTreatment=levels(FoodTreatment),
                             SexParent=levels(SexParent)))
-newdata = emmeans(owls.glmmTMB4, ~FoodTreatment+SexParent, at=owls.grid,
+newdata = emmeans(owls_glmm, ~FoodTreatment+SexParent, at=owls.grid,
                   offset=log(mean(owls$BroodSize)), type='response') %>%
     as.data.frame
 head(newdata)
@@ -245,7 +294,7 @@ ggplot(newdata, aes(y=rate, x=FoodTreatment)) +
 newdata=tidy(owls.glmmTMB3, effects='fixed', conf.int=TRUE,  exponentiate=TRUE) %>%
   mutate(Model='zip (simple zi)') %>%
   bind_rows(
-    tidy(owls.glmmTMB4, effects='fixed', conf.int=TRUE,  exponentiate=TRUE) %>%
+    tidy(owls_glmm, effects='fixed', conf.int=TRUE,  exponentiate=TRUE) %>%
     mutate(Model='zip (complex zi)')
   ) %>%
   bind_rows(
@@ -270,7 +319,7 @@ ggplot(newdata,  aes(y=estimate,  x=Cond,  color=Model)) +
 newdata = emmeans(owls.glmmTMB3, ~FoodTreatment+SexParent, offset=0, at=owls.grid, type='response') %>%
   as.data.frame %>% mutate(Model='zip (simple zi)',  response=rate) %>%
   bind_rows(
-    emmeans(owls.glmmTMB4, ~FoodTreatment+SexParent, offset=0, at=owls.grid, type='response') %>%
+    emmeans(owls_glmm, ~FoodTreatment+SexParent, offset=0, at=owls.grid, type='response') %>%
     as.data.frame %>% mutate(Model='zip (complex zi)',  response=rate)
   ) %>%
   bind_rows(
