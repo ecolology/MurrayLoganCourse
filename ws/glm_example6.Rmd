@@ -106,7 +106,7 @@ Autumn   Low       14         3.74           AutumnLow
 **density**        Categorical listing of the density of mussels within mussel clump - independent variable
 **recruits**       The number of mussel recruits - response variable
 **sqrtrecruits**   Square root transformation of recruits - needed to meet the test assumptions
-**groups**         Categorical listing of Season/Density combinations - used for checking ANOVA assumptions
+**groups**         Categorical listing of Season/density combinations - used for checking ANOVA assumptions
 ------------------ --------------------------------------------------------------------------------------------
 
 ![Mussel](../resources/mussels.jpg){height="300"}
@@ -207,7 +207,7 @@ Checking for overdispersion and zero inflation together actually provides a bett
 # Different model {.tabset .tabset-faded}
 We'll fit a negative binomial by dividing data into zeros and ones.
 ```{r}
-quinn.nb <- MASS::glm.nb(RECRUITS ~ DENSITY*SEASON, data = quinn)
+quinn.nb <- MASS::glm.nb(recruits ~ DENSITY*SEASON, data = quinn)
 quinn.resid <- simulateResiduals(quinn.nb, plot = TRUE)
 ```
 Compare:
@@ -260,18 +260,18 @@ ggplot(data = newdata, mapping = aes(y = response, x = SEASON, fill = DENSITY)) 
 Fitting a zero inflated model:
 ```{r zeroinflate, results='markdown', eval=TRUE, hidden=TRUE}
 library(pscl)
-quinn.zip <- zeroinfl(RECRUITS ~ DENSITY*SEASON | 1, data=quinn,  dist='poisson') #the "|1" fits basically a null model
+quinn.zip <- zeroinfl(recruits ~ DENSITY*SEASON | 1, data=quinn,  dist='poisson') #the "|1" fits basically a null model
 #quinn.resid <- simulateResiduals(quinn.zip,  plot=TRUE) does not support zero inflated models
 summary(quinn.zip)
 plogis(-3) #approximately 5% of zeros are not real zeros (-3 comes from the zero inflation model coefficients estimate), 5% is a small possibility and it makes sense according to our previous analyses
 #tidy(quinn.zip,  conf.int=TRUE, exponentiate = TRUE)
 exp(-3.0037)
 
-quinn.zip1 <- zeroinfl(RECRUITS ~ DENSITY*SEASON | SEASON, data=quinn,  dist='poisson') #was the rate any different in different seasons? ('|SEASON')
+quinn.zip1 <- zeroinfl(recruits ~ DENSITY*SEASON | SEASON, data=quinn,  dist='poisson') #was the rate any different in different seasons? ('|SEASON')
 summary(quinn.zip1)
 exp(-3.0037)
 
-quinn.zinb <- zeroinfl(RECRUITS ~ DENSITY*SEASON | 1, data=quinn,  dist='negbin')
+quinn.zinb <- zeroinfl(recruits ~ density*SEASON | 1, data=quinn,  dist='negbin')
 AICc(quinn.zip,  quinn.zinb)
 
 summary(quinn.zinb)

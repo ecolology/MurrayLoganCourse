@@ -85,7 +85,7 @@ A plant pathologist wanted to examine the effects of two different strengths of 
 
 Format of tobacco.csv data files
 
-leaf   treat    number
+leaf   treat    nlegion
 ------ -------- --------
 1      Strong   35.898
 1      Week     25.02
@@ -98,7 +98,7 @@ leaf   treat    number
 ------------ ----------------------------------------------------------------------------------------------------
 **leaf**     The blocking factor - Factor B
 **treat**    Categorical representation of the strength of the tobacco virus - main factor of interest Factor A
-**number**   Number of lesions on that part of the tobacco leaf - response variable
+**nlegion**   Number of lesions on that part of the tobacco leaf - response variable
 ------------ ----------------------------------------------------------------------------------------------------
 
 
@@ -106,9 +106,9 @@ leaf   treat    number
 
 ```{r readData, results='markdown', eval=TRUE}
 tobacco <- read_csv('../data/tobacco.csv', trim_ws=TRUE) %>%
-  janitor::clean_names() %>% rename(treat = treatment) %>%
-  mutate(leaf = factor(leaf),
-         treat = fct_rev(treat))
+  janitor::clean_names() %>% 
+  rename(nlegion = number, treat = treatment) %>%
+  mutate(leaf = factor(leaf), treat = fct_rev(treat))
 glimpse(tobacco)
 ```
 
@@ -141,7 +141,7 @@ To explore the assumptions of homogeneity of variance and normality, a boxplot
 of each Treatment level is appropriate.
 
 ```{r tobaccoEDA2, results='markdown', eval=TRUE, hidden=TRUE}
-ggplot(tobacco,  aes(y=number,  x=treat)) +
+ggplot(tobacco,  aes(y=nlegion,  x=treat)) +
   geom_boxplot() +
   labs(x = "Treatment", y = "Legion count")
 ```
@@ -158,11 +158,11 @@ and do they respond similarly to the treatment.
 
 ## Another good plot for random effects across treatments:
 ```{r tobaccoEDA3, results='markdown', eval=TRUE, hidden=TRUE}
-ggplot(tobacco,  aes(y=number,  x=as.numeric(leaf))) +
+ggplot(tobacco,  aes(y=nlegion,  x=as.numeric(leaf))) +
   geom_line(aes(linetype=treat))
 
 ## If we want to retain the original leaf labels
-ggplot(tobacco,  aes(y=number,  x=as.numeric(leaf))) +
+ggplot(tobacco,  aes(y=nlegion,  x=as.numeric(leaf))) +
   geom_blank(aes(x=leaf)) +
   geom_line(aes(linetype=treat))
 ```
@@ -180,7 +180,7 @@ easier to visualise the differences in baselines and effect consistency by
 plotting as:
 
 ```{r tobaccoEDA4, results='markdown', eval=TRUE, hidden=TRUE}
-ggplot(tobacco,  aes(y=number,  x=treat,  group=leaf)) +
+ggplot(tobacco,  aes(y=nlegion,  x=treat,  group=leaf)) +
   geom_point() +
   geom_line(aes(x=as.numeric(treat))) 
 ```
@@ -226,11 +226,128 @@ amount of unexplained variance and thus improve the power of the main effect
 
 # Fit the model {.tabset .tabset-faded}
 
+## Note on ML optimizers
+
+The default nlmib optimizer for determining maximum likelihood and restricted maximum likelihoods, which is designed for speed, but doesn't always work. 
+With smaller data such as this, we need to use a different engine to determine our highest maximum likelihood.
+
+Random intercept model:
+```{r}
+tobacco_lmm1 <- glmmTMB(nlegion ~ treat + (1|leaf), data=tobacco,
+                       REML=T)
+```
+(1|leaf) is interpreted as ‘do the intercept [‘1’] by [‘|’] leaf as a random effect’
+
+
+REML is residual or restricted maximum likelihood, is required when comparing different random effect structures.
+
+Random slope and intercept model:
+```{r, warnings=T, messages}
+tobacco_lmm2 <- glmmTMB(nlegion ~ treat + ((1 + treat)|leaf), 
+                        data=tobacco, REML=T); AICc(tobacco_lmm2)
+
+# equivalent formulation:
+tobacco_lmm2 <- glmmTMB(nlegion ~ treat + (treat|leaf), 
+                        data=tobacco, REML=T); AICc(tobacco_lmm2)
+```
+
+
+((1 + treat)|random) also written as (1 + treat|leaf) or (treat|leaf) is interpreted as ‘do the intercept [‘1’] and slope ['treat'] by [‘|’] leaf as a random effect’
+
+If the model failed to converge, we can use a different optimization algorithm. Here is how to change it:
+
+```{r}
+better_opt <- glmmTMBControl(optimizer = "optim",
+               optArgs = "Nelder-Mead")
+tobacco_lmm2 <- glmmTMB(nlegion ~ treat + (treat|leaf), 
+                        data=tobacco, REML=T,
+                        control = better_opt)
+tobacco_lmm2
+```
+Nelder-Mead is quite robust, but much slower. If there is still convergence problems, there is likely an issue with the model we are fitting (too complex for the data available), rather than the optimizer!
+
+Random slope model:
+```{r, warning = T}
+tobacco_lmm3 <- glmmTMB(nlegion ~ treat + ((-1 + treat)|leaf), 
+                        data=tobacco, REML=T,
+                        control = better_opt)
+```
+
+## Use AIC to determine the optimal random effect structure
+
+```{r}
+AICc(tobacco_lmm1, tobacco_lmm2, tobacco_lmm3)
+```
+A random intercept model is preferred over random slope and intercept.
+
 
 # Model validation {.tabset .tabset-faded}
+```{r}
+plot_model(tobacco_lmm1, type = 'diag')[-2] %>% plot_grid()
+```
+
+```{r}
+plot_model(tobacco_lmm1, type = 'eff')
+```
+
+```{r}
+ggemmeans(tobacco_lmm1, ~treat) %>% plot(add.data=T)
+```
+
+```{r}
+summary(tobacco_lmm1)
+```
+
+To change the covariance matrix to a correlation matrix:
+```{r}
+cov2cor(vcov(tobacco_lmm1)$cond)
+```
+Now, we can see the correlation between weak and strong is -0.51.
+
+To get confidence intervals:
+```{r}
+tidy(tobacco_lmm1, conf.int=T)
+# for just fixed effects:
+tidy(tobacco_lmm1, effects = 'fixed', conf.int=T)
+# for just random efffects:
+tidy(tobacco_lmm1, effects = 'ran_pars', conf.int=T)
+
+```
+
+To get how different each intercept is:
+```{r}
+(leaf_re <- tobacco_lmm1 %>% ranef %>% unlist)
+mean(leaf_re) # essentially zero
+sd(leaf_re)
+
+```
+
+To get pseudo-r^2:
+```{r}
+MuMIn::r.squaredGLMM(tobacco_lmm1)
+```
+
+First is the marginal effect R^2 (fixed effects only)
+
+Second is the conditional R^2 (fixed and random effects together)
+
+We can also use the performance package:
+```{r}
+performance::r2_nakagawa(tobacco_lmm1)
+```
 
 
 # Partial plots {.tabset .tabset-faded}
+```{r}
+tobacco_lmm1 %>% emmeans(~treat) %>%
+  as.data.frame() %>%
+  rename(nlegion = emmean, lwr = lower.CL, upr = upper.CL) %>%
+  ggplot(aes(x = treat, y = nlegion)) +
+  geom_pointrange(aes(ymin = lwr, ymax = upr)) +
+  geom_jitter(data = tobacco, col = "red", height = 0, width = 0.1) +
+  labs(x = "Treatment", y = "Number of legions")
+
+```
 
 
 # Model investigation / hypothesis testing {.tabset .tabset-faded}

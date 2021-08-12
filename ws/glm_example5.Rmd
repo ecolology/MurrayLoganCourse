@@ -230,8 +230,6 @@ Two rules to planned contrasts:
 1. Can only use # groups - 1 planned comparisons
 2. Each of these comparisons must be independent of one another
 
-
-
 ```{r}
 cmat <- cbind('Alg1_Alg2' = c(1, -1, 0, 0),
               'NB_S' = c(0, 0, 1, -1),

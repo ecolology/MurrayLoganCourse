@@ -94,7 +94,7 @@ Fish mass was also recorded as a covariate as this is known to influence metabol
 
 Format of norin.csv data files
 
-FISHID   MASS    TRIAL             SMR\_contr   CHANGE
+fishid   mass    trial             smr\_contr   change
 -------- ------- ----------------- ------------ --------
 1        35.69   LowSalinity       5.85         -31.92
 2        33.84   LowSalinity       6.53         2.52
@@ -111,22 +111,54 @@ FISHID   MASS    TRIAL             SMR\_contr   CHANGE
 
 
 ---------------- ------------------------------------------------------------------------------------------------------------------------------------------------------
-**FISHID**       Categorical listing of the individual fish that are repeatedly sampled
-**MASS**         Mass (g) of barramundi. Covariate in analysis
-**TRIAL**        Categorical listing of the trial (LowSalinity: 10ppt salinity; HighTemperature: 35 degrees; Hypoxia: 45% air-sat. oxygen.
-**SMR\_contr**   Standard metabolic rate (mg/h/39.4 g of fish) under control trial conditions (35 ppt salinity, 29 degrees, normoxia)
-**CHANGE**       Percentage difference in Standard metabolic rate (mg/h/39.4 g of fish) between Trial conditions and control adjusted for \'regression to the mean\'.
+**fishid**       Categorical listing of the individual fish that are repeatedly sampled
+**mass**         Mass (g) of barramundi. Covariate in analysis
+**trial**        Categorical listing of the trial (LowSalinity: 10ppt salinity; HighTemperature: 35 degrees; Hypoxia: 45% air-sat. oxygen.
+**smr\_contr**   Standard metabolic rate (mg/h/39.4 g of fish) under control trial conditions (35 ppt salinity, 29 degrees, normoxia)
+**change**       Percentage difference in Standard metabolic rate (mg/h/39.4 g of fish) between Trial conditions and control adjusted for \'regression to the mean\'.
 ---------------- ------------------------------------------------------------------------------------------------------------------------------------------------------
 
 # Read in the data
 
 ```{r readData, results='markdown', eval=TRUE}
-norin = read_csv('../data/norin.csv', trim_ws=TRUE)
+norin <- read_csv('../data/norin.csv', trim_ws=TRUE) %>%
+  janitor::clean_names() %>%
+  mutate(fishid = factor(fishid), trial = factor(trial))
 glimpse(norin)
 ```
 
 
+
 # Exploratory data analysis
+
+```{r}
+norin %>%
+  ggplot(aes(x = trial, y = change)) +
+  geom_boxplot()
+```
+
+```{r}
+norin %>% 
+  ggplot(aes(x = smr_contr, y = change, shape = trial, color = trial)) +
+  geom_smooth(method = "lm") +
+  geom_point()
+
+```
+
+We can see that smr_contr + trial is similar to an ANCOVA design, as we need to see if the lines are parallel or if they are not, indicating an interaction.
+
+```{r}
+norin %>% 
+  ggplot(aes(x = mass, y = change, shape = trial, color = trial)) +
+  geom_smooth(method = "lm") +
+  geom_point()
+```
+
+We can see that mass doesn't seem to affect change much.
+
+We can add in mass as an offset - doesn't cost any df, but does soak up the additional variance associated. HOWEVER, it assumes the effect of mass is a 1:1 effect on response. Obviously this is not the case here.
+Density is the classic example for using offset. Instead of counts, we can put it in as an offset.
+
 
 Model formula:
 $$
@@ -141,90 +173,67 @@ $\bf{Z}$ represents a cell means model matrix for the random intercepts associat
 
 # Fit the model {.tabset .tabset-faded}
 
-<div class='HIIDEN'>
+<div class='HIDDEN'>
 For each of the following modelling alternatives, we will:
 
-- establish whether MASS is a useful covariate (based on AICc).  This step
+- establish whether mass is a useful covariate (based on AICc).  This step
   involves evaluating alternative fixed effects structures.  When doing so, we
   must use Maximum Likelihood (ML) rather than Residual Maximum Likelihood (REML).
 - establish whether a random intercept/slope model is useful (based on AICc).
   This step involves evaluating alternative random effects structures.  When
   doing so, we should use Restricted Maximum Likelihood (REML)
 
-## lme (nlme) {.tabset .tabset-faded}
 
-### fixed structures
 
-```{r fitModel1a, results='markdown', eval=TRUE, hidden=TRUE}
-##Compare models that estimate partial slope for MASS vs an offset for MASS
-##must use ML to compare models that vary in fixed effects
-norin.lme1 <- lme(CHANGE ~ TRIAL*scale(SMR_contr, scale=FALSE) + offset(MASS), random=~1|FISHID, data=norin, method='ML')
-## Unfortunately,  update() does not remove offset().
-## We will just have to write the other model out in full as well.
-norin.lme2 <- lme(CHANGE ~ TRIAL*scale(SMR_contr, scale=FALSE) + MASS,  random=~1|FISHID, data=norin, method='ML')
-## Now without MASS altogether
-norin.lme3 <- lme(CHANGE ~ TRIAL*scale(SMR_contr, scale=FALSE),  random=~1|FISHID, data=norin, method='ML')
+## Estimate fixed effect structure with REML = F
+```{r}
+norin_lmm1 <- glmmTMB(change ~ trial * scale(smr_contr, scale = FALSE) +
+                    offset(mass) + (1|fishid), data = norin,
+                   REML = F)
+better_opt <- glmmTMBControl(optimizer = "optim",
+               optArgs = "Nelder-Mead")
+norin_lmm2 <- glmmTMB(change ~ trial * scale(smr_contr, scale = FALSE) +
+                    scale(mass, scale=F) + (1|fishid), data = norin,
+                   REML = F, control = better_opt) # still has problems, even with the optimizer
 
-## Compare these models via AICc
-AICc(norin.lme1,norin.lme2, norin.lme3)
-## Alternatively,  we can use sequential Likelihood Ratio Tests (LRT)
-anova(norin.lme1, norin.lme2, norin.lme3)
+norin_lmm3 <- glmmTMB(change ~ trial * scale(smr_contr, scale = FALSE) +
+                  (1|fishid), data = norin,
+                   REML = F)
+AICc(norin_lmm1, norin_lmm2, norin_lmm3)
 ```
+
+We cannot get the model with mass to converge. This may be a signal that this model is simply too complicated for the data available.
+
+We add a third model to see what it looks like without mass included as an offset.
+
+This third model is the best according to AICc, thus we drop mass as an important factor.
+
 
 **Conclusions:**
 
-- on the basis of AICc, the model without MASS is considered the most
+- on the basis of AICc, the model without mass is considered the most
   parsimonious (lowest AICc)
 - we will proceed with the fixed structure of model 3
 
-### random structures
 
-```{r fitModel1b, results='markdown', eval=TRUE, hidden=TRUE}
-norin.lme3a = update(norin.lme3, method='REML')
-norin.lme3b = update(norin.lme3a, random=~TRIAL|FISHID)
-AICc(norin.lme3a,  norin.lme3b)
-anova(norin.lme3a, norin.lme3b)
+## Estimate random effect structure with REML = T
+
+```{r}
+norin_lmm3 <- glmmTMB(change ~ trial * scale(smr_contr, scale = FALSE) +
+                  (1|fishid), data = norin,
+                   REML = T)
+norin_lmm4 <- glmmTMB(change ~ trial * scale(smr_contr, scale = FALSE) +
+                  (trial|fishid), data = norin,
+                   REML = T)
+AICc(norin_lmm3, norin_lmm4)
 ```
+The random slope and intercept model is preferred. Thus, allowing each fish to have a different response
 
-**Conclusions:**
+We could try the smr_contr as a random slope, but the problem is that each fish has the same base metabolism, so there is no variability within each fish to fit random slopes to!
 
-- the AICc of the random intercept/slope model is lowest
-- therefore we will proceed with a random intercept/slope model
-
-## lmer (lme4) {.tabset .tabset-pills}
-
-### fixed structure
-
-```{r fitModel2a, results='markdown', eval=TRUE, hidden=TRUE}
-##Compare models that estimate partial slope for MASS vs an offset for MASS
-##must use ML to compare models that vary in fixed effects
-norin.lmer1 <- lmer(CHANGE ~ TRIAL*scale(SMR_contr, scale=FALSE) + offset(MASS) + (1|FISHID), data=norin, REML=FALSE)
-## Unfortunately,  update() does not remove offset().
-## We will just have to write the other model out in full as well.
-norin.lmer2 <- lmer(CHANGE ~ TRIAL*scale(SMR_contr, scale=FALSE) + MASS + (1|FISHID), data=norin, REML=FALSE)
-## Now without MASS altogether
-norin.lmer3 <- lmer(CHANGE ~ TRIAL*scale(SMR_contr, scale=FALSE)+ (1|FISHID), data=norin, REML=FALSE)
-
-## Compare these models via AICc
-AICc(norin.lmer1,norin.lmer2, norin.lmer3)
-## Alternatively,  we can use sequential Likelihood Ratio Tests (LRT)
-anova(norin.lmer1, norin.lmer2, norin.lmer3)
-```
-
-**Conclusions:**
-
-- on the basis of AICc, the model without MASS is considered the most
-  parsimonious (lowest AICc)
-- we will proceed with the fixed structure of model 3
-
-### random structure
-
-```{r fitModel2b, results='markdown', eval=TRUE, hidden=TRUE}
-norin.lmer3a = update(norin.lmer3, REML=TRUE)
-## unfortunately,  the following random intercept/slope model cannot be fit
-##norin.lmer3b = update(norin.lmer3a, ~ . -(1|FISHID) +(TRIAL|FISHID))
-##AICc(norin.lmer3a,  norin.lmer3b)
-##anova(norin.lmer3a, norin.lmer3b)
+```{r}
+norin %>% 
+  arrange(fishid) %>% select(fishid, smr_contr) %>% head(10)
 ```
 
 **Conclusions:**
@@ -232,61 +241,108 @@ norin.lmer3a = update(norin.lmer3, REML=TRUE)
 - unfortunately, we are unable to fit a model with random intercept/slope
 - therefore we will proceed with a random intercept model
 
-## glmmTMB {.tabset .tabset-pills}
-
-### fixed structure
-
-```{r fitModel3a, results='markdown', eval=TRUE, hidden=TRUE}
-##Compare models that estimate partial slope for MASS vs an offset for MASS
-norin.glmmTMB1 = glmmTMB(CHANGE ~ TRIAL*scale(SMR_contr, scale=FALSE) + offset(MASS) + (1|FISHID), data=norin, REML=FALSE)
-## Unfortunately,  update() does not remove offset().
-## We will just have to write the other model out in full as well.
-norin.glmmTMB2 <- lmer(CHANGE ~ TRIAL*scale(SMR_contr, scale=FALSE) + MASS + (1|FISHID), data=norin, REML=FALSE)
-## Now without MASS altogether
-norin.glmmTMB3 <- lmer(CHANGE ~ TRIAL*scale(SMR_contr, scale=FALSE) + (1|FISHID), data=norin, REML=FALSE)
-
-## Compare these models via AICc
-AICc(norin.glmmTMB1,norin.glmmTMB2, norin.glmmTMB3)
-```
-
-**Conclusions:**
-
-- on the basis of AICc, the model without MASS is considered the most
-  parsimonious (lowest AICc)
-- we will proceed with the fixed structure of model 3
-
-## random structure
-```{r fitModel3b, results='markdown', eval=TRUE, hidden=TRUE}
-norin.glmmTMB3a <- update(norin.glmmTMB3, REML=TRUE)
-## unfortunately,  the following random intercept/slope model cannot be fit
-## norin.glmmTMB3b <- update(norin.glmmTMB3a, ~ . - (1|FISHID)+ (TRIAL|FISHID))
-##AICc(norin.glmmTMB1a,  norin.glmmTMB1b)
-```
-
-**Conclusions:**
-
-- unfortunately, we are unable to fit a model with random intercept/slope
-- therefore we will proceed with a random intercept model
-
-</div>
 
 # Model validation {.tabset .tabset-faded}
 
-
+```{r}
+norin_lmm4 %>% simulateResiduals(plot=T)
+```
+Literally near perfect.
 
 # Partial plots model {.tabset .tabset-faded}
 
+Using sjPlot::plot_model
+```{r}
+norin_lmm4 %>% plot_model(type = 'eff', show.data = T) %>% plot_grid() # Misleading due to the assumption that there is no interactions
+norin_lmm4 %>% plot_model(type = 'eff', terms = c("smr_contr", "trial"), 
+                          show.data = T) # put both plots together
+
+```
+Using emmeans:
+```{r}
+norin_lmm4 %>% ggemmeans(~smr_contr|trial) %>% plot(add.data=T) # assumes no interaction
+```
+**Note:** that ggemmeans seems to cause errors with the x-axis coordinates of the points! This seems to be an error!
+
 
 # Model investigation / hypothesis testing {.tabset .tabset-faded}
+Using REML fit for interpretation.
+```{r}
+summary(norin_lmm4)
+```
+
+Evidence of slope x intercept correlation for high salin vs. hypoxia and high salin (-0.62) vs. low salin (r = -0.21), but not super important for model interpretation.
+
+Very high correlations between variables indicates that bizarre stuff is happening...
+
+```{r}
+cov2cor(vcov(norin_lmm4)$cond)
+```
+
+For random effect terms:
+x+(x|g) = 1+x+(1+x|g) --> Correlated random intercept and slope terms
+x+(x||g) = 1+x+(1|g)+(0+x|g) --> Uncorrelated random intercept and slope terms
+
+
 
 
 
 # Predictions / further analyses {.tabset .tabset-faded}
+```{r}
+summary(norin_lmm4)
+tidy(norin_lmm4, conf.int=T, effect='fixed')
+```
+Significant slope between hypoxia and physiology, not significant between low salinity and physiology, but missing comparison of high salinity and physiology! Use emtrends to do this.
+
+```{r}
+emtrends(norin_lmm4, pairwise ~ trial, var = "smr_contr")
+```
+Hypoxia vs. high temp significant, everything else is not significant.
+
+```{r}
+norin_lmm4 %>% 
+  emmeans(~ trial) %>% # get differences
+  regrid() %>%  # does backtransform of the differences BEFORE pair-wise comparisons
+  pairs() %>% # get pair-wise absolute values of differences
+  confint() # get confidence interval limits for these differences
+```
+
+# Planned contrasts {.tabset .tabset-faded}
+We wish to compare the pair-wise differences among these trials at specific values of physiology (smr_contr). To do so, we can create a prediction grid, then use emmeans:
+
+```{r}
+norin_grid <- with(norin, 
+                   list(smr_contr = c(min(smr_contr), 
+                                      mean(smr_contr),
+                                      max(smr_contr))))
+emmeans(norin_lmm1, pairwise ~ trial|smr_contr, at = norin_grid)
+```
+Shows the differences at each specific level
+
+```{r}
+r.squaredGLMM(norin_lmm4)
+performance::r2_nakagawa(norin_lmm4)
+```
 
 
 
 
 # Summary figures {.tabset .tabset-faded}
+
+```{r}
+norin_grid <- with(norin, 
+                   list(smr_contr = modelr::seq_range(smr_contr, n=100)))
+newdata = emmeans(norin_lmm4, ~ smr_contr|trial, at = norin_grid) %>%
+  as.data.frame() %>%
+  rename(change = emmean, lwr = lower.CL, upr = upper.CL)
+newdata %>%
+  ggplot(aes(x = smr_contr, y = change)) +
+  geom_ribbon(aes(ymin = lwr, ymax = upr, fill = trial), alpha = 0.3) +
+  geom_line(aes(color = trial)) +
+  theme(legend.position = c(0.99, 0.99),
+        legend.justification = c(1,1)) +
+  geom_point(data = norin, aes(col = trial)) # apparently is bad?
+```
 
 
 # References
