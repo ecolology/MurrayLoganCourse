@@ -184,7 +184,7 @@ tidy(mckeon_glmm, effect='fixed', conf.int=TRUE, exponentiate=TRUE)
 
 **Conclusions:**
 
-- the coefficients are presented on a logit scale.  Whilst this is not relavant
+- the coefficients are presented on a logit scale.  Whilst this is not relevant
   for the purpose of inference testing, it does make it difficult to interpret
   the coefficients.
 - if we exponentiate the coefficients ($log(\frac{\rho}{1-\rho})$ ->
