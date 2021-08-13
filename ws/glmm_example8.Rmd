@@ -81,7 +81,7 @@ and brood effects of sheep ticks *Ixodes ricinus* on red grouse
 
 Format of elston.csv data file
 
-INDEX TICKS BROOD ALTITUDE YEAR LOCATION 
+index ticks brood altitude year location 
 ----- ----- ----- -------- ---- -------- 
 1     0     32501 465      95   32       
 2     0     32501 465      95   32       
@@ -92,95 +92,123 @@ INDEX TICKS BROOD ALTITUDE YEAR LOCATION
 \...  \...  \...  \...     \... \...     
 
 -------------- ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-**INDEX**     An integer between 1 and the number of rows that uniquely identifies each individual record
-**TICKS**     The response - the number of ticks on the chick.
-**BROOD**     A random effect indicating which brood the chick comes from.
-**ALTITUDE**  The altitude (a continuous covariate)
-**YEAR**      Year - the main covariate
-**LOCATION**  A random effect
+**index**     An integer between 1 and the number of rows that uniquely identifies each individual record
+**ticks**     The response - the number of ticks on the chick.
+**brood**     A random effect indicating which brood the chick comes from.
+**altitude**  The altitude (a continuous covariate)
+**year**      year - the main covariate
+**location**  A random effect
 
 -------------- ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 # Read in the data
 
 ```{r readData, results='markdown', eval=TRUE}
-elston = read_csv('../data/elston.csv', trim_ws=TRUE)
+elston <- read_csv('../data/elston.csv', trim_ws=TRUE) %>%
+  janitor::clean_names()
 glimpse(elston)
 ```
 
 
 # Exploratory data analysis
 
-Model formula:
-$$
-y_i \sim{} \mathcal{Pois}(\lambda_i)\\
-ln(\lambda_i) =\boldsymbol{\beta} \bf{X_i} + \boldsymbol{\gamma} \bf{Z_i}
-$$
+<!-- Model formula: -->
+<!-- $$ -->
+<!-- y_i \sim{} \mathcal{Pois}(\lambda_i)\\ -->
+<!-- ln(\lambda_i) =\boldsymbol{\beta} \bf{X_i} + \boldsymbol{\gamma} \bf{Z_i} -->
+<!-- $$ -->
 
-where $\boldsymbol{\beta}$ and $\boldsymbol{\gamma}$ are vectors of the fixed and random effects parameters respectively 
-and $\bf{X}$ is the model matrix representing the overall intercept and effects of year and altitude (centered) and their interaction on the number of number of ticks.
-$\bf{Z}$ represents a cell means model matrix for the random intercepts associated with location and brood within location.
+<!-- where $\boldsymbol{\beta}$ and $\boldsymbol{\gamma}$ are vectors of the fixed and random effects parameters respectively  -->
+<!-- and $\bf{X}$ is the model matrix representing the overall intercept and effects of year and altitude (centered) and their interaction on the number of number of ticks. -->
+<!-- $\bf{Z}$ represents a cell means model matrix for the random intercepts associated with location and brood within location. -->
 
 ```{r EDA, results='markdown', eval=FALSE, hidden=FALSE}
-##Response = TICKS
-## LOCATION (R)
-## BROOD (R)
-## ALTITUDE
-## YEAR
-elston = elston %>%
-    mutate(fYear=factor(YEAR),
-           LOCATION=factor(LOCATION),
-           BROOD = factor(paste0(LOCATION,BROOD)))
+##Response = ticks
+## location (R)
+## brood (R)
+## altitude
+## year
+elston <- elston %>%
+    mutate(fyear = factor(year),
+           location = factor(location),
+           brood = factor(paste0(location, brood)))
 
-ggplot(elston, aes(y=TICKS, x=ALTITUDE, color=fYear)) +
+ggplot(elston, aes(y=ticks, x=altitude, color=fyear)) +
   geom_smooth() +
   geom_point() +
   scale_y_log10()
-
-elston.glmmTMB <- glmmTMB(TICKS ~ fYear*scale(ALTITUDE) + (1|LOCATION/BROOD),
-                          data=elston,  family=poisson(link='log'),  REML=FALSE)
-elston.glmmTMB1 <- glmmTMB(TICKS ~ fYear+scale(ALTITUDE) + (1|LOCATION/BROOD),
-                           data=elston,  family=poisson(link='log'),  REML=FALSE)
-AICc(elston.glmmTMB,  elston.glmmTMB1)
-
-elston.glmmTMB <- update(elston.glmmTMB,  REML=TRUE)
-elston.glmmTMB1 <- update(elston.glmmTMB, .~.-(1|LOCATION/BROOD)+(fYear|LOCATION/BROOD))
-elston.glmmTMB1 <- update(elston.glmmTMB, .~.-(1|LOCATION/BROOD)+(scale(ALTITUDE)|LOCATION/BROOD))
-#elston.glmmTMB1 <- update(elston.glmmTMB, .~.-(1|LOCATION/BROOD)+(ALTITUDE|LOCATION/BROOD))
-AICc(elston.glmmTMB,  elston.glmmTMB1)
-
-plot_model(elston.glmmTMB, type='diag') %>% plot_grid
-performance::check_model(elston.glmmTMB)
-elston.resid <- simulateResiduals(elston.glmmTMB,  plot=TRUE)
-
-plot(allEffects(elston.glmmTMB),  multiline=TRUE,  ci.style='bands')
-##plot_model(elston.glmmTMB, type='eff', terms=c('ALTITUDE', 'fYear'))
-
-summary(elston.glmmTMB)
-tidy(elston.glmmTMB,  conf.int=TRUE,  exponentiate=TRUE)
-
-emmeans(elston.glmmTMB,  pairwise~fYear|ALTITUDE,  type='response',
-        at=list(ALTITUDE= quantile(elston$ALTITUDE)))
-emmeans(elston.glmmTMB,  pairwise~fYear|ALTITUDE,  type='response',
-        at=list(ALTITUDE= quantile(elston$ALTITUDE)))$contrasts %>%
-  confint() %>% 
-  as.data.frame %>%
-  ggplot(aes(y=ratio,  x=ALTITUDE,  color=contrast)) +
-  geom_hline(yintercept=1,  linetype='dashed') +
-  geom_pointrange(aes(ymin=lower.CL,  ymax=upper.CL),  position=position_dodge(width=0.2)) +
-  scale_y_log10() +
-  coord_flip()
-
-elston.grid = with(elston,  list(ALTITUDE=modelr::seq_range(ALTITUDE,  n=100)))
-newdata = emmeans(elston.glmmTMB,  ~ALTITUDE|fYear, type='response',
-                  at = elston.grid) %>%
-  as.data.frame
-head(newdata)
-ggplot(newdata) +
-  geom_ribbon(aes(x=ALTITUDE, fill=fYear, ymin=lower.CL, ymax=upper.CL),  alpha=0.3) +
-  geom_line(aes(y=rate, x=ALTITUDE, color=fYear)) +
-  scale_y_log10()
 ```
+
+```{r}
+# interaction:
+elston_glmm1 <- glmmTMB(ticks ~ fyear*scale(altitude, scale=FALSE) + 
+                             (1|location/brood),
+                          data=elston, family=poisson(link='log'), REML=FALSE)
+# no interaction:
+elston_glmm2 <- glmmTMB(ticks ~ fyear + scale(altitude, scale=FALSE) +
+                             (1|location/brood),
+                           data=elston, family=poisson(link='log'), REML=FALSE)
+AICc(elston_glmm1,  elston_glmm2) %>% arrange(AICc)
+rm(elston_glmm2)
+```
+
+Keep interaction, even though we don't have to..
+
+```{r}
+# original nested random intercepts of (1|location/brood)
+elston_glmm1a <- update(elston_glmm1,  REML=T)
+
+# nested random slopes by year, fyear|location/brood
+elston_glmm1b <- glmmTMB(ticks ~ fyear*scale(altitude, scale=FALSE) + 
+                              (fyear|location/brood),
+                          data=elston, family=poisson(link='log'), REML=T)
+
+# nested random slopes by altitude, altitude|location/brood
+elston_glmm1c <- glmmTMB(ticks ~ fyear*scale(altitude, scale=FALSE) + 
+                              (scale(altitude, scale=FALSE)|location/brood),
+                          data=elston, family=poisson(link='log'), REML=T)
+AICc(elston_glmm1a, elston_glmm1b, elston_glmm1c)
+```
+Only first one could run!
+
+## Model validation
+```{r}
+plot_model(elston_glmm1a, type='diag') %>% plot_grid
+```
+Looks good!
+
+```{r}
+performance::check_model(elston_glmm1a)
+```
+
+```{r}
+elston_resid <- simulateResiduals(elston_glmm1a,  plot=TRUE)
+
+plot(allEffects(elston_glmm1a),  multiline=TRUE,  ci.style='bands')
+##plot_model(elston_glmm1a, type='eff', terms=c('altitude', 'fyear'))
+```
+
+
+```{r}
+summary(elston_glmm1a)
+# tidy(elston_glmm1a,  conf.int=TRUE,  exponentiate=TRUE)
+
+emmeans(elston_glmm1a,  pairwise~fyear|altitude,  type='response',
+        at=list(altitude= quantile(elston$altitude)))
+
+emmeans(elston_glmm1a,  ~fyear|altitude,
+        at=list(altitude= quantile(elston$altitude))) %>%
+  regrid() %>%
+  pairs() %>%
+  print(infer = c(TRUE, TRUE))
+# Absolute values of differences
+  
+```
+
+
+
+
+
 
 
 # Fit the model
@@ -190,7 +218,43 @@ ggplot(newdata) +
 # Model investigation / hypothesis testing
 
 # Predictions
+```{r}
+emmeans(elston_glmm1a,  pairwise~fyear|altitude,  type='response',
+        at=list(altitude= quantile(elston$altitude)))$contrasts %>%
+  confint() %>% 
+  as.data.frame %>%
+  ggplot(aes(y=ratio,  x=altitude,  color=contrast)) +
+  geom_hline(yintercept=1,  linetype='dashed') +
+  geom_pointrange(aes(ymin=lower.CL,  ymax=upper.CL),  position=position_dodge(width=0.2)) +
+  scale_y_log10() +
+  coord_flip()
+```
 
 # Summary figures
 
+```{r}
+
+elston_grid <- with(elston,  list(altitude=modelr::seq_range(altitude,  n=100)))
+
+newdata <- emmeans(elston_glmm1a,  ~altitude|fyear, type='response',
+                  at = elston_grid) %>%
+  as.data.frame
+head(newdata)
+
+obs <- augment(elston_glmm1a) %>% 
+  bind_cols(dplyr::select(elston, smr_contr)) %>%
+  mutate(partial_obs = .fitted + .resid)
+
+g1 + 
+  # geom_point(data = norin, aes(col = trial)) # looks the same, but in models where the other variables not being plotted explain a lot of the variation, will be drastically different!
+  geom_point(data = obs, aes(y = partial_obs, color = trial))
+
+
+newdata %>%
+  ggplot() +
+  geom_ribbon(aes(x=altitude, fill=fyear, ymin=lower.CL, ymax=upper.CL),  alpha=0.3) +
+  geom_line(aes(y=rate, x=altitude, color=fyear)) +
+  scale_y_continuous(trans = scales::pseudo_log_trans()) +
+  geom_point(data = elston, aes(y = ticks, x = altitude, col = fyear)) # may not be accurate, see previous code for why!
+```
 # References

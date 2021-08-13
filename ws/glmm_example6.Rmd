@@ -79,7 +79,7 @@ theme_set(theme_classic())
 In an attempt to understand the effects on marine animals of short-term
 exposure to toxic substances, such as might occur following a spill, or
 a major increase in storm water flows, a it was decided to examine the
-toxicant in question, Copper, as part of a field experiment in Hong
+toxicant in question, copper, as part of a field experiment in Hong
 Kong. The experiment consisted of small sources of Cu (small,
 hemispherical plaster blocks, impregnated with copper), which released
 the metal into sea water over 4 or 5 days. The organism whose response
@@ -108,21 +108,22 @@ from the center of the plate.
 
 Format of copper.csv data file
 
-COPPER   PLATE   DIST   WORMS   AREA   COUNT
+copper   plate   dist   worms   AREA   COUNT
 -------- ------- ------ ------- ------ -------
 ..       ..      ..     ..      ..     ..
 
 ------------ -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-**COPPER**   Categorical listing of the copper treatment (control = no copper applied, week 2 = copper treatment applied in second week and week 1= copper treatment applied in first week) applied to whole plates. Factor A (between plot factor).
-**PLATE**    Substrate provided for polychaete worm colonization on which copper treatment applied. These are the plots (Factor B). Numbers in this column represent numerical labels given to each plate.
-**DIST**     Categorical listing for the four concentric distances from the center of the plate (source of copper treatment) with 1 being the closest and 4 the furthest. Factor C (within plot factor)
-**WORMS**    Density (\#/cm~2~) of worms measured. Response variable.
+**copper**   Categorical listing of the copper treatment (control = no copper applied, week 2 = copper treatment applied in second week and week 1= copper treatment applied in first week) applied to whole plates. Factor A (between plot factor).
+**plate**    Substrate provided for polychaete worm colonization on which copper treatment applied. These are the plots (Factor B). Numbers in this column represent numerical labels given to each plate.
+**dist**     Categorical listing for the four concentric distances from the center of the plate (source of copper treatment) with 1 being the closest and 4 the furthest. Factor C (within plot factor)
+**worms**    Density (\#/cm~2~) of worms measured. Response variable.
 ------------ -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 # Read in the data
 
 ```{r readData, results='markdown', eval=TRUE}
-copper = read_csv('../data/copper.csv', trim_ws=TRUE)
+copper <- read_csv('../data/copper.csv', trim_ws=TRUE) %>%
+  janitor::clean_names()
 glimpse(copper)
 ```
 
@@ -167,13 +168,13 @@ shape parameter of the Gamma distribution.
 # Summary figures
 
 ```{r summaryFigure, results='markdown', echo=TRUE, eval=TRUE, hidden=TRUE, fig.width=8, fig.height=4}
-copper.comp <- emmeans(copper.glmmTMB3.1a,  ~COPPER|DIST,  type='response') %>%
+copper.comp <- emmeans(copper.glmmTMB3.1a,  ~copper|dist,  type='response') %>%
   contrast(method='pairwise') %>%
     confint() %>%
     as.data.frame                                                                           
 head(copper.comp)
 
-g1=ggplot(copper.comp, aes(y=ratio, x=contrast, color=DIST)) +
+g1=ggplot(copper.comp, aes(y=ratio, x=contrast, color=dist)) +
     geom_pointrange(aes(ymin=lower.CL, ymax=upper.CL),
                     position=position_dodge(width=0.6)) +
     geom_hline(yintercept=1) +
@@ -181,13 +182,13 @@ g1=ggplot(copper.comp, aes(y=ratio, x=contrast, color=DIST)) +
     coord_flip() +
     theme_bw()
 
-newdata = emmeans(copper.glmmTMB3.1a, ~COPPER|DIST,
+newdata = emmeans(copper.glmmTMB3.1a, ~copper|dist,
                   type='response') %>%
   confint() %>% 
   as.data.frame
 
 head(newdata)
-g2 = ggplot(newdata, aes(y=response, x=DIST, fill=COPPER)) +
+g2 = ggplot(newdata, aes(y=response, x=dist, fill=copper)) +
   geom_pointrange(aes(ymin=lower.CL, ymax=upper.CL),shape=21, position=position_dodge(width=0.2)) +
   theme_bw()
 g2 + g1

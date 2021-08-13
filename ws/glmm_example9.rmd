@@ -1,0 +1,161 @@
+---
+title: "GLMM example 9"
+author: "Murray Logan"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    code_folding: show
+    collapse: no
+    df_print: paged
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: textmate
+    theme: spacelab
+    toc: yes
+    toc_float: yes
+    css: ../resources/style.css
+  pdf_document:
+    df_print: default
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: tango
+    latex_engine: xelatex
+    number_sections: yes
+    toc_depth: 2
+  word_document:
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: tango
+    toc: yes
+    toc_depth: 2
+output_dir: "docs"
+documentclass: article
+fontsize: 12pt
+mainfont: Arial
+mathfont: LiberationMono
+monofont: DejaVu Sans Mono
+classoption: a4paper
+bibliography: ../resources/references.bib
+---
+
+```{r setup, include=FALSE, warnings=FALSE, message=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Preparations
+
+Load the necessary libraries
+
+```{r libraries, results='markdown', eval=TRUE, message=FALSE, warning=FALSE}
+library(car)       #for regression diagnostics
+library(broom)     #for tidy output
+library(broom.mixed) #for tidy output
+library(ggfortify) #for model diagnostics
+library(sjPlot)    #for outputs
+library(knitr)     #for kable
+library(effects)   #for partial effects plots
+library(ggeffects) #for effects plots in ggplotjk
+library(emmeans)   #for estimating marginal means
+library(MASS)      #for glm.nb
+library(MuMIn)     #for AICc
+library(tidyverse) #for data wrangling
+library(DHARMa)    #for assessing dispersion etc
+library(glmmTMB)    #for glmmTMB
+library(performance) #for diagnostic plots
+library(see)         #for diagnostic plots
+library(ordinal)    #for ordinal models
+```
+
+
+# Scenario
+
+# Read in the data
+
+```{r readData, results='markdown', eval=TRUE}
+hughes = read_csv('../data/hughes.csv', trim_ws=TRUE) #bleaching data for 2016
+glimpse(hughes)
+```
+
+| REEF   | HABITAT | SECTOR | SCORE |
+|--------|---------|--------|-------|
+| 09-357 | C       | North  | 4     |
+| 09-357 | F       | North  | 4     |
+| 09-357 | U       | North  | 3     |
+|        |         |        |       |
+
+# Data preparation
+```{r}
+hughes <- hughes %>%
+  mutate(oSCORE = factor(SCORE, ordered = TRUE),
+         HABITAT = factor(HABITAT),
+         SECTOR = factor(SECTOR, levels = c('North', 'Central', 'South')),
+         REEF = factor(REEF))
+```
+For a categorical variable, it will apply a treatment contrast.
+
+```{r}
+hughes.sum <- hughes %>%
+  count(SECTOR, HABITAT, oSCORE) %>%
+  group_by(SECTOR, HABITAT) %>%
+  mutate(prop = prop.table(n),
+         oSCORE = factor(oSCORE, levels = rev(levels(oSCORE))))
+```
+
+
+# Exploratory Data Analysis
+```{r}
+ggplot(data = hughes.sum, aes(y = prop, x = HABITAT)) +
+  geom_bar(stat = 'Identity', aes(fill = oSCORE), color = 'black') + #'Identity' means don't do anything on it, multiply by 1
+  facet_grid(~SECTOR) +
+  theme_bw() +
+  theme(panel.spacing.y = unit(10, 'pt'))
+```
+
+
+# Fit models
+
+```{r}
+hughes.clmm <- ordinal::clmm(oSCORE ~ HABITAT*SECTOR + (1|REEF),
+                             data = hughes)
+
+#partial plot
+plot_model(hughes.clmm, type = 'eff',
+           terms = c('SECTOR', 'HABITAT'))
+
+#summary
+summary(hughes.clmm)
+
+exp(-9.1435) #the odds for habitat C for having 0 bleaching compared to having a higher bleaching that that is 0.0001069125%
+
+exp(1.5678) #odds of having higher bleaching score than habitat C in North sector
+
+1/exp(-7.1817)
+
+emmeans(hughes.clmm, ~oSCORE|HABITAT+SECTOR, mode = 'prob') #gives a weighed average so the sum of each column probability is 1
+
+emmeans(hughes.clmm, ~HABITAT|SECTOR, mode = 'mean.class') #mean bleaching for each sector, need to subtract 1 from everything because bleaching classes start from 0
+
+emmeans(hughes.clmm, ~HABITAT|SECTOR, mode = 'mean.class') %>%
+  pairs() #to directly compare the habitats by sector
+```
+```{r}
+newdata <- emmeans(hughes.clmm, ~HABITAT|SECTOR, 
+                   mode = 'mean.class') %>%
+  as.data.frame() %>%
+  mutate(across(c(mean.class, asymp.LCL, asymp.UCL), function(x) x-1))
+
+ggplot(newdata) +
+  geom_hline(yintercept = 1, linetype = 'dashed', size = 0.1) +
+  geom_hline(yintercept = 2, linetype = 'dashed', size = 0.1) +
+  geom_hline(yintercept = 3, linetype = 'dashed', size = 0.1) +
+  geom_pointrange(aes(y = mean.class, x = HABITAT,
+                      ymin = asymp.LCL, ymax = asymp.UCL)) +
+  facet_grid(~SECTOR) +
+  scale_y_continuous('Bleaching score', breaks = (0:4), labels = 0:4,
+                     limits = c(0, 4), expand = c(0, 0)) +
+  theme_bw()
+```
+

@@ -76,7 +76,7 @@ theme_set(theme_classic())
 # Scenario
 
 In an honours thesis from (1992), Mullens was investigating the ways
-that cane toads ( Bufo marinus ) respond to conditions of hypoxia. Toads
+that cane toads ( Bufo marinus ) respond to conditions of hypoxia. toads
 show two different kinds of breathing patterns, lung or buccal,
 requiring them to be treated separately in the experiment. Her aim was
 to expose toads to a range of O~2~ concentrations, and record their
@@ -100,11 +100,11 @@ option, she did not have a set of independent measurements for each
 oxygen concentration, by repeated measurements on each animal across the
 8 oxygen concentrations.
 
-![Toad](../resources/bufo.jpg){width="251" height="290"}
+![toad](../resources/bufo.jpg){width="251" height="290"}
 
 Format of mullens.csv data file
 
-BREATH   TOAD   O2LEVEL   FREQBUC   SFREQBUC
+breath   toad   oxy   freqbuc   sfreqbuc
 -------- ------ --------- --------- ----------
 lung     a      0         10.6      3.256
 lung     a      5         18.8      4.336
@@ -113,145 +113,211 @@ lung     a      15        16.6      4.074
 \...     \...   \...      \...      \...
 
 -------------- ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-**BREATH**     Categorical listing of the breathing type treatment (buccal = buccal breathing toads, lung = lung breathing toads). This is the between subjects (plots) effect and applies to the whole toads (since a single toad can only be one breathing type - either lung or buccal). Equivalent to Factor A (between plots effect) in a split-plot design
-**TOAD**       These are the subjects (equivalent to the plots in a split-plot design: Factor B). The letters in this variable represent the labels given to each individual toad.
-**O2LEVEL**    0 through to 50 represent the the different oxygen concentrations (0% to 50%). The different oxygen concentrations are equivalent to the within plot effects in a split-plot (Factor C).
-**FREQBUC**    The frequency of buccal breathing - the response variable
-**SFREQBUC**   Square root transformed frequency of buccal breathing - the response variable
+**breath**     Categorical listing of the breathing type treatment (buccal = buccal breathing toads, lung = lung breathing toads). This is the between subjects (plots) effect and applies to the whole toads (since a single toad can only be one breathing type - either lung or buccal). Equivalent to Factor A (between plots effect) in a split-plot design
+**toad**       These are the subjects (equivalent to the plots in a split-plot design: Factor B). The letters in this variable represent the labels given to each individual toad.
+**oxy**    0 through to 50 represent the the different oxygen concentrations (0% to 50%). The different oxygen concentrations are equivalent to the within plot effects in a split-plot (Factor C).
+**freqbuc**    The frequency of buccal breathing - the response variable
+**sfreqbuc**   Square root transformed frequency of buccal breathing - the response variable
 -------------- ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 # Read in the data
 
 ```{r readData, results='markdown', eval=TRUE}
-mullens = read_csv('../data/mullens.csv', trim_ws=TRUE)
+mullens <- read_csv('../data/mullens.csv', trim_ws=TRUE) %>%
+  janitor::clean_names() %>%
+  rename(oxy = o2level) %>%
+  mutate(toad = factor(toad),
+         breath = factor(breath),
+         per_buc = freqbuc/100,
+         per_buc_nz = ifelse(per_buc == 0, 0.01, per_buc)) # set to minimum measurable value
 glimpse(mullens)
 ```
 
 
 # Exploratory data analysis
 
-Model formula:
-$$
-y_i \sim{} \mathcal{Pois}(\lambda_i)\\
-ln(\lambda_i) =\boldsymbol{\beta} \bf{X_i} + \boldsymbol{\gamma} \bf{Z_i}
-$$
+## Data hierarchy:
 
-where $\boldsymbol{\beta}$ and $\boldsymbol{\gamma}$ are vectors of the fixed and random effects parameters respectively 
-and $\bf{X}$ is the model matrix representing the overall intercept and effects of copper, distance and their interaction on the number of number of worms.
-Area of the place segment was also incorporated as an offset.
-$\bf{Z}$ represents a cell means model matrix for the random intercepts associated with individual plates.
+breath type (between toad effect)
+toad (random effect)
+oxy (within toad effect)
+freqbuc (measured y-var: not the count, the % time buccal breathing)
+Note that we don't have the raw data for counts, but this brings up a new distribution we haven't tried! Beta-distribution.
+
+**Note:** beta-distribution cannot include zeros or ones! Need to check this.
+```{r}
+mullens %>%
+  group_by(breath, oxy) %>%
+  summarise(min = min(per_buc),
+            max = max(per_buc))
+```
+
+There are zeros in the lung breathers for oxy 0, 5, 10, and 15!
+
+```{r}
+mullens %>%
+  ggplot(aes(y = per_buc, x = factor(oxy), color = breath)) +
+  geom_violin() +
+  geom_jitter(position = position_dodge(0.9))
+
+mullens %>%
+  ggplot(aes(x = oxy, y = per_buc_nz, color = breath)) +
+  geom_smooth(se=F) +
+  geom_point()
+
+mullens %>%
+  ggplot(aes(y = freqbuc, x = oxy, color = breath)) +
+  facet_wrap(~breath+toad, scales='free') +
+  geom_point() +
+  geom_smooth()
+
+```
+
+Note that as oxy goes up, the variance in percent buccal breathing decreases!
+However, the blue line is clearly non-linear. To account for this, we may need to consider polynomials or GAMs. Or we could even make oxygen a factor!
+
+We will fit a polynomial.
+
+Note that random slopes may also be useful here, but will be nested within breath!
+
+<!-- Model formula: -->
+<!-- This is not a beta-distribution.. -->
+<!-- $$ -->
+<!-- y_i \sim{} \mathcal{Pois}(\lambda_i)\\ -->
+<!-- ln(\lambda_i) =\boldsymbol{\beta} \bf{X_i} + \boldsymbol{\gamma} \bf{Z_i} -->
+<!-- $$ -->
+
+<!-- where $\boldsymbol{\beta}$ and $\boldsymbol{\gamma}$ are vectors of the fixed and random effects parameters respectively  -->
+<!-- and $\bf{X}$ is the model matrix representing the overall intercept and effects of copper, distance and their interaction on the number of number of worms. -->
+<!-- Area of the place segment was also incorporated as an offset. -->
+<!-- $\bf{Z}$ represents a cell means model matrix for the random intercepts associated with individual plates. -->
 
 
 # Fit the model {.tabset .tabset-faded}
 
+Use up to a third polynomial, never more. After that, biological interpretation becomes impossible.
+
+
+```{r}
+mullens_glmm1 <- glmmTMB(per_buc_nz ~ breath + poly(oxy, 3) + (1|toad), 
+                         famil=beta_family(link = "logit"), data = mullens, REML=F)
+mullens_glmm2 <- glmmTMB(per_buc_nz ~ breath * poly(oxy, 3) + (1|toad), 
+                         famil=beta_family(link = "logit"), data = mullens, REML=F)
+mullens_glmm3 <- glmmTMB(per_buc_nz ~ breath * poly(oxy, 2) + (1|toad), 
+                         famil=beta_family(link = "logit"), data = mullens, REML=F)
+AICc(mullens_glmm1, mullens_glmm2, mullens_glmm3) %>% arrange(AICc)
+```
+We see that the interaction model is better than the other.
+
+```{r}
+mullens_glmm2a <- glmmTMB(per_buc_nz ~ breath * poly(oxy, 3) + (1|toad), 
+                         famil=beta_family(link = "logit"), data = mullens, REML=T)
+mullens_glmm2b <- glmmTMB(per_buc_nz ~ breath * poly(oxy, 3) + (poly(oxy, 3)|toad), 
+                         famil=beta_family(link = "logit"), data = mullens, REML=T)
+mullens_glmm2c <- glmmTMB(per_buc_nz ~ breath * poly(oxy, 3) + (oxy|toad), 
+                         famil=beta_family(link = "logit"), data = mullens, REML=T)
+AICc(mullens_glmm2a, mullens_glmm2b, mullens_glmm2c) %>% arrange(AICc)
+rm(mullens_glmm1, mullens_glmm2, mullens_glmm2a, mullens_glmm2c)
+```
+Random slopes model is preferred.
+**Note:** If the fixed part is a polynomial, we should try to keep the random effects slope the same. Thus, even though model 2c is the best in terms of AICc, we should select the polynomial term.
+
+
+
 
 # Model validation {.tabset .tabset-faded}
+```{r}
+simulateResiduals(mullens_glmm2b, plot=T)
+```
+
+```{r}
+ggemmeans(mullens_glmm2b, ~oxy|breath) %>% plot(add.data=T)
+```
+Points are incorrect on this plot again, but the line should be correct.
+```{r}
+plot_model(mullens_glmm2b,  type='diag')
+plot_model(mullens_glmm2b,  type='eff',  terms=c('oxy', 'breath'))
+
+```
+
 
 
 # Model investigation / hypothesis testing {.tabset .tabset-faded}
+```{r}
+summary(mullens_glmm2b)
+```
+Random effects:
+Variance in the intercept is relatively small, thus all toads have roughly the same average value. There is a large amount of variance in the first polynomial coefficient, a bit more in the second, not so much in the third.
+
+Conditional model:
+```{r}
+# By buccal breathers
+plogis(-1.8176) # 14% buccal breathing in frogs that are buccal breathers
+# Evidence of linear trend in buccal breathers, no evidence of quadratic or 3rd order relationship in buccal breathers
+
+# By lung breathers
+plogis(-1.8176 -0.5654) # 8.4% buccal breathing in frogs that are lung breathers
+# Evidence of both linear trend and quadratic in lung breathers, but no evidence (p=0.07) of 3rd order polynomial in lung breathers
+
+```
+We can clearly see that a concave quadratic relationship exists for the lung breathers, but only a linear relationship exists for buccal breathers.
+
 
 
 # Further analyses {.tabset .tabset-faded}
-
+Get the linear vs. quadratic trends for buccal and lung breathers, respectively:
+```{r}
+emtrends(mullens_glmm2b, 
+         specs = "breath", 
+         var = "oxy",
+         max.degree=3, 
+         infer = c(TRUE, TRUE))
+```
+Evidence of linear component for buccal breathers, but not lung breathers
+Evidence of quadratic or third-order relationship for lung breathers, but not buccal breathers.
 
 # Summary figures {.tabset .tabset-faded}
 
-## sqrt (gaussian) with lmer
+```{r fig.width=7, fig.height=7}
+mullens_grid <- with(mullens, 
+                    list(breath=levels(breath),
+                         oxy=modelr::seq_range(oxy, n=1000),
+                         breath = levels(breath)))
 
-```{r summaryFigures1a, results='markdown', eval=TRUE, hidden=FALSE, fig.width=7, fig.height=7}
-mullens.grid = with(mullens,
-   list(BREATH=levels(BREATH),
-     O2LEVEL=seq(min(O2LEVEL), max(O2LEVEL), len=100)
-   )
-)
-newdata = emmeans(mullens.lmer1a, ~O2LEVEL|BREATH,
-                  at=mullens.grid, type='response') %>% as.data.frame %>%
-          mutate(emmean = emmean^2,
-                 lower.CL=lower.CL^2,
-                 upper.CL=upper.CL^2)
+newdata <- emmeans(mullens_glmm2b, ~oxy|breath,
+                  at=mullens_grid, type='response') %>% 
+  as.data.frame %>% rename(per_buc_nz = response, lwr = lower.CL, upr = upper.CL)
 head(newdata)
 
-ggplot() +
-    geom_ribbon(data=newdata,
-                aes(ymin=lower.CL,ymax=upper.CL,
-                    x=O2LEVEL, fill=BREATH), alpha=0.3)+    
-    geom_line(data=newdata,
-              aes(y=emmean, x=O2LEVEL, color=BREATH)) +
-    theme_classic()
-```
-
-## sqrt (gaussian)
-
-```{r summaryFigures2a, results='markdown', eval=TRUE, hidden=FALSE, fig.width=7, fig.height=7}
-mullens.grid = with(mullens,
-   list(BREATH=levels(BREATH),
-     O2LEVEL=seq(min(O2LEVEL), max(O2LEVEL), len=100)
-   )
-)
-newdata = emmeans(mullens.glmmTMB1a, ~O2LEVEL|BREATH,
-                  at=mullens.grid, type='response') %>% as.data.frame %>%
-          mutate(emmean = emmean^2,
-                 lower.CL=lower.CL^2,
-                 upper.CL=upper.CL^2)
-head(newdata)
+newdata %>%
+  group_by(breath) %>%
+  summarise(max_buc = per_buc_nz[which.max(per_buc_nz)],
+            oxy_with_max_buc = oxy[which.max(per_buc_nz)])
 
 ggplot() +
-    geom_ribbon(data=newdata,
-                aes(ymin=lower.CL,ymax=upper.CL,
-                    x=O2LEVEL, fill=BREATH), alpha=0.3)+    
-    geom_line(data=newdata,
-              aes(y=emmean, x=O2LEVEL, color=BREATH)) +
-    theme_classic()
-```
-
-
-## beta
-
-```{r summaryFigures3a, results='markdown', eval=TRUE, hidden=FALSE, fig.width=7, fig.height=7}
-mullens.grid = with(mullens,
-   list(BREATH=levels(BREATH),
-     O2LEVEL=seq(min(O2LEVEL), max(O2LEVEL), len=100)
-   )
-)
-newdata = emmeans(mullens.glmmTMB2b, ~O2LEVEL|BREATH,
-                  at=mullens.grid, type='response') %>% as.data.frame 
-head(newdata)
-
-ggplot() +
-    geom_ribbon(data=newdata,
-                aes(ymin=lower.CL,ymax=upper.CL,
-                    x=O2LEVEL, fill=BREATH), alpha=0.3)+    
-    geom_line(data=newdata,
-              aes(y=response, x=O2LEVEL, color=BREATH)) +
-    theme_classic()
+    geom_ribbon(data = newdata,
+                aes(ymin = lwr, ymax = upr,
+                    x = oxy, fill = breath), alpha=0.3) +    
+    geom_line(data = newdata,
+              aes(y = per_buc_nz, x = oxy, color = breath)) +
+  scale_y_log10()
 ```
 
 
 
 ```{r name, results='markdown', eval=FALSE, hidden=FALSE}
-mullens.glmmTMB = glmmTMB(pzBUC ~ BREATH*poly(O2LEVEL, 3) + (1|TOAD), data=mullens,
-                          family=beta_family(link = "logit"))
-
-#mullens.glmmTMB1 = glmmTMB(pzBUC ~ BREATH*poly(scale(O2LEVEL), 3) +
-#                               (poly(scale(O2LEVEL), 3)|TOAD), data=mullens,
-#                          family=beta_family(link = "logit"))
-
-mullens.glmmTMB1 = glmmTMB(pzBUC ~ BREATH*poly(O2LEVEL, 3) + (O2LEVEL|TOAD), data=mullens,
-                           family=beta_family(link = "logit"))
-AIC(mullens.glmmTMB, mullens.glmmTMB1)
-
 
 ## library(lme4)
-## mullens.glmer = glmer(pBUC ~ BREATH*poly(O2LEVEL, 3) + (1|TOAD),
+## mullens.glmer = glmer(pBUC ~ breath*poly(oxy, 3) + (1|toad),
 ##                       data=mullens, family=Beta(link='logit'))
-## mullens.glmer1 = glmer(pBUC ~ BREATH*poly(O2LEVEL, 3) + (BREATH|TOAD),
+## mullens.glmer1 = glmer(pBUC ~ breath*poly(oxy, 3) + (breath|toad),
 ##                       data=mullens, family=binomial(link='logit'))
 ## AIC(mullens.glmer,mullens.glmer1)
 ##                                         # Try this trick instead
-## mullens.glmer = glmer(cbind(FREQBUC,100-FREQBUC) ~ BREATH*poly(O2LEVEL, 3) + (1|TOAD),
+## mullens.glmer = glmer(cbind(freqbuc,100-freqbuc) ~ breath*poly(oxy, 3) + (1|toad),
 ##                       data=mullens, family=binomial(link='logit'))
 
-## mullens.glmer1 = glmer(cbind(FREQBUC,100-FREQBUC) ~ BREATH+poly(O2LEVEL, 3) + (1|TOAD),
+## mullens.glmer1 = glmer(cbind(freqbuc,100-freqbuc) ~ breath+poly(oxy, 3) + (1|toad),
 ##                       data=mullens, family=binomial(link='logit'))
 ## AICc(mullens.glmer, mullens.glmer1)
 
@@ -268,35 +334,31 @@ mullens.resid = simulateResiduals(mullens.glmmTMB1,  plot=TRUE)
 
 plot(allEffects(mullens.glmmTMB1))
 plot(allEffects(mullens.glmmTMB1),  multiline=TRUE,  ci.style='bands')
-plot_model(mullens.glmmTMB1, type='eff', terms=c('O2LEVEL', 'BREATH')) 
+plot_model(mullens.glmmTMB1, type='eff', terms=c('oxy', 'breath')) 
 
 
 summary(mullens.glmmTMB1)
 tidy(mullens.glmmTMB1, conf.int=TRUE,  exponentiate=TRUE)
 
-#model.matrix(~BREATH*poly(O2LEVEL,3), mullens)
-emtrends(mullens.glmmTMB1,  ~BREATH,  var='O2LEVEL',  max.degree=3) 
+#model.matrix(~breath*poly(oxy,3), mullens)
+emtrends(mullens.glmmTMB1,  ~breath,  var='oxy',  max.degree=3) 
 
-emmeans(mullens.glmmTMB1, ~O2LEVEL|BREATH) #%>% as.data.frame
+emmeans(mullens.glmmTMB1, ~oxy|breath) #%>% as.data.frame
 
-emmeans(mullens.glmmTMB1, ~O2LEVEL|BREATH,type='response')
-#contrast(emmeans(mullens.glmmTMB, ~O2LEVEL|BREATH,type='response'),interaction='poly')
+emmeans(mullens.glmmTMB1, ~oxy|breath,type='response')
+#contrast(emmeans(mullens.glmmTMB, ~oxy|breath,type='response'),interaction='poly')
 
-mullens.grid = with(mullens,
-   list(BREATH=levels(BREATH),
-     O2LEVEL=seq(min(O2LEVEL), max(O2LEVEL), len=100)
-   )
-)
-newdata = emmeans(mullens.glmmTMB1, ~O2LEVEL|BREATH,
-        at=mullens.grid, type='response') %>% as.data.frame
+
+newdata = emmeans(mullens.glmmTMB1, ~oxy|breath,
+        at=mullens_grid, type='response') %>% as.data.frame
 head(newdata)
 
 ggplot() +
     geom_ribbon(data=newdata,
                 aes(ymin=lower.CL,ymax=upper.CL,
-                    x=O2LEVEL, fill=BREATH), alpha=0.3)+    
+                    x=oxy, fill=breath), alpha=0.3)+    
     geom_line(data=newdata,
-              aes(y=response, x=O2LEVEL, color=BREATH)) +
+              aes(y=response, x=oxy, color=breath)) +
     theme_classic()
 
 r.squaredGLMM(mullens.glmmTMB1)
