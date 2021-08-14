@@ -139,6 +139,8 @@ ggplot(elston, aes(y=ticks, x=altitude, color=fyear)) +
   scale_y_log10()
 ```
 
+# Fit the model
+
 ```{r}
 # interaction:
 elston_glmm1 <- glmmTMB(ticks ~ fyear*scale(altitude, scale=FALSE) + 
@@ -171,7 +173,7 @@ AICc(elston_glmm1a, elston_glmm1b, elston_glmm1c)
 ```
 Only first one could run!
 
-## Model validation
+# Model validation
 ```{r}
 plot_model(elston_glmm1a, type='diag') %>% plot_grid
 ```
@@ -188,6 +190,7 @@ plot(allEffects(elston_glmm1a),  multiline=TRUE,  ci.style='bands')
 ##plot_model(elston_glmm1a, type='eff', terms=c('altitude', 'fyear'))
 ```
 
+# Model investigation / hypothesis testing
 
 ```{r}
 summary(elston_glmm1a)
@@ -205,17 +208,6 @@ emmeans(elston_glmm1a,  ~fyear|altitude,
   
 ```
 
-
-
-
-
-
-
-# Fit the model
-
-# Model validation
-
-# Model investigation / hypothesis testing
 
 # Predictions
 ```{r}
@@ -257,4 +249,5 @@ newdata %>%
   scale_y_continuous(trans = scales::pseudo_log_trans()) +
   geom_point(data = elston, aes(y = ticks, x = altitude, col = fyear)) # may not be accurate, see previous code for why!
 ```
+
 # References

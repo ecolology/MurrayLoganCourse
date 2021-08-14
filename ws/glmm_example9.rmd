@@ -67,6 +67,7 @@ library(glmmTMB)    #for glmmTMB
 library(performance) #for diagnostic plots
 library(see)         #for diagnostic plots
 library(ordinal)    #for ordinal models
+theme_set(theme_classic())
 ```
 
 
@@ -75,11 +76,12 @@ library(ordinal)    #for ordinal models
 # Read in the data
 
 ```{r readData, results='markdown', eval=TRUE}
-hughes = read_csv('../data/hughes.csv', trim_ws=TRUE) #bleaching data for 2016
+hughes <- read_csv('../data/hughes.csv', trim_ws=TRUE) %>%
+  janitor::clean_names()#bleaching data for 2016
 glimpse(hughes)
 ```
 
-| REEF   | HABITAT | SECTOR | SCORE |
+| reef   | habitat | sector | score |
 |--------|---------|--------|-------|
 | 09-357 | C       | North  | 4     |
 | 09-357 | F       | North  | 4     |
@@ -89,27 +91,27 @@ glimpse(hughes)
 # Data preparation
 ```{r}
 hughes <- hughes %>%
-  mutate(oSCORE = factor(SCORE, ordered = TRUE),
-         HABITAT = factor(HABITAT),
-         SECTOR = factor(SECTOR, levels = c('North', 'Central', 'South')),
-         REEF = factor(REEF))
+  mutate(oscore = factor(score, ordered = TRUE),
+         habitat = factor(habitat),
+         sector = factor(sector, levels = c('North', 'Central', 'South')),
+         reef = factor(reef))
 ```
 For a categorical variable, it will apply a treatment contrast.
 
 ```{r}
 hughes.sum <- hughes %>%
-  count(SECTOR, HABITAT, oSCORE) %>%
-  group_by(SECTOR, HABITAT) %>%
+  count(sector, habitat, oscore) %>%
+  group_by(sector, habitat) %>%
   mutate(prop = prop.table(n),
-         oSCORE = factor(oSCORE, levels = rev(levels(oSCORE))))
+         oscore = factor(oscore, levels = rev(levels(oscore))))
 ```
 
 
 # Exploratory Data Analysis
 ```{r}
-ggplot(data = hughes.sum, aes(y = prop, x = HABITAT)) +
-  geom_bar(stat = 'Identity', aes(fill = oSCORE), color = 'black') + #'Identity' means don't do anything on it, multiply by 1
-  facet_grid(~SECTOR) +
+ggplot(data = hughes.sum, aes(y = prop, x = habitat)) +
+  geom_bar(stat = 'Identity', aes(fill = oscore), color = 'black') + #'Identity' means don't do anything on it, multiply by 1
+  facet_grid(~sector) +
   theme_bw() +
   theme(panel.spacing.y = unit(10, 'pt'))
 ```
@@ -118,12 +120,12 @@ ggplot(data = hughes.sum, aes(y = prop, x = HABITAT)) +
 # Fit models
 
 ```{r}
-hughes.clmm <- ordinal::clmm(oSCORE ~ HABITAT*SECTOR + (1|REEF),
+hughes.clmm <- ordinal::clmm(oscore ~ habitat*sector + (1|reef),
                              data = hughes)
 
 #partial plot
 plot_model(hughes.clmm, type = 'eff',
-           terms = c('SECTOR', 'HABITAT'))
+           terms = c('sector', 'habitat'))
 
 #summary
 summary(hughes.clmm)
@@ -134,15 +136,15 @@ exp(1.5678) #odds of having higher bleaching score than habitat C in North secto
 
 1/exp(-7.1817)
 
-emmeans(hughes.clmm, ~oSCORE|HABITAT+SECTOR, mode = 'prob') #gives a weighed average so the sum of each column probability is 1
+emmeans(hughes.clmm, ~oscore|habitat+sector, mode = 'prob') #gives a weighed average so the sum of each column probability is 1
 
-emmeans(hughes.clmm, ~HABITAT|SECTOR, mode = 'mean.class') #mean bleaching for each sector, need to subtract 1 from everything because bleaching classes start from 0
+emmeans(hughes.clmm, ~habitat|sector, mode = 'mean.class') #mean bleaching for each sector, need to subtract 1 from everything because bleaching classes start from 0
 
-emmeans(hughes.clmm, ~HABITAT|SECTOR, mode = 'mean.class') %>%
+emmeans(hughes.clmm, ~habitat|sector, mode = 'mean.class') %>%
   pairs() #to directly compare the habitats by sector
 ```
 ```{r}
-newdata <- emmeans(hughes.clmm, ~HABITAT|SECTOR, 
+newdata <- emmeans(hughes.clmm, ~habitat|sector, 
                    mode = 'mean.class') %>%
   as.data.frame() %>%
   mutate(across(c(mean.class, asymp.LCL, asymp.UCL), function(x) x-1))
@@ -151,9 +153,9 @@ ggplot(newdata) +
   geom_hline(yintercept = 1, linetype = 'dashed', size = 0.1) +
   geom_hline(yintercept = 2, linetype = 'dashed', size = 0.1) +
   geom_hline(yintercept = 3, linetype = 'dashed', size = 0.1) +
-  geom_pointrange(aes(y = mean.class, x = HABITAT,
+  geom_pointrange(aes(y = mean.class, x = habitat,
                       ymin = asymp.LCL, ymax = asymp.UCL)) +
-  facet_grid(~SECTOR) +
+  facet_grid(~sector) +
   scale_y_continuous('Bleaching score', breaks = (0:4), labels = 0:4,
                      limits = c(0, 4), expand = c(0, 0)) +
   theme_bw()
