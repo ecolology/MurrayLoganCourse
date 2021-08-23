@@ -39,6 +39,8 @@ mathfont: LiberationMono
 monofont: DejaVu Sans Mono
 classoption: a4paper
 bibliography: ../resources/references.bib
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r setup, include=FALSE}
@@ -65,45 +67,42 @@ library(ggeffects)  #for partial plots
 library(tidyverse)  #for data wrangling etc
 library(broom.mixed)#for summarising models
 library(ggeffects)  #for partial effects plots
-theme_set(theme_grey()) #put the default ggplot theme back
+theme_set(theme_classic()) #put the default ggplot theme back
 ```
 
 # Scenario
 
-Here is an example from @Fowler-1998-1998. An agriculturalist was interested in the effects of fertilizer load on the yield of grass.  Grass seed was sown uniformly over an area and different quantities of commercial fertilizer were applied to each of ten 1 m<sup>2</sup> randomly located plots.  Two months later the grass from each plot was harvested, dried and weighed.  The data are in the file **fertilizer.csv** in the **data** folder.
+Here is an example from @Fowler-1998-1998. An agriculturalist was interested in the effects of fertilizer load on the yield of grass. Grass seed was sown uniformly over an area and different quantities of commercial fertilizer were applied to each of ten 1 m<sup>2</sup> randomly located plots. Two months later the grass from each plot was harvested, dried and weighed. The data are in the file **fertilizer.csv** in the **data** folder.
 
-![](../resources/turf.jpg){width=70%}
+![](../resources/turf.jpg){width="70%"}
 
-| FERTILIZER   | YIELD   |
-| ------------ | ------- |
-| 25           | 84      |
-| 50           | 80      |
-| 75           | 90      |
-| 100          | 154     |
-| 125          | 148     |
-| \...         | \...    |
+| fert | yield |
+|------|-------|
+| 25   | 84    |
+| 50   | 80    |
+| 75   | 90    |
+| 100  | 154   |
+| 125  | 148   |
+| ...  | ...   |
 
----------------- ---------------------------------------------------
-**FERTILIZER**:   Mass of fertilizer (g.m^-2^) - Predictor variable
-**YIELD**:        Yield of grass (g.m^-2^) - Response variable
----------------- ---------------------------------------------------
- 
- 
+|            |                                                   |
+|------------|:--------------------------------------------------|
+| **fert**:  | Mass of fertilizer (g.m^-2^) - Predictor variable |
+| **yield**: | Yield of grass (g.m^-2^) - Response variable      |
+
 The aim of the analysis is to investigate the relationship between fertilizer concentration and grass yield.
 
 # Read in the data
 
-
 ```{r readData, results='markdown', eval=TRUE}
-fert = read_csv('../data/fertilizer.csv', trim_ws=TRUE)
+fert <- read_csv('../data/fertilizer.csv', trim_ws=TRUE) %>%
+  janitor::clean_names()
 glimpse(fert)
 ```
 
 # Exploratory data analysis
 
-
-Model formula:
-$$
+Model formula: $$
 \begin{align}
 y_i &\sim{} \mathcal{N}(\mu_i, \sigma^2)\\
 \mu_i &= \beta_0 + \beta_1 x_i\\
@@ -119,36 +118,51 @@ $$
 
 # Fit the model {.tabset .tabset-faded}
 
-
 # MCMC sampling diagnostics {.tabset .tabset-faded}
-
-
 
 **MCMC sampling behaviour**
 
 `available_mcmc()`
 
-| Package   | Description       | function               | rstanarm                          | brms                               |
-|-----------|-------------------|------------------------|----------------------------------|------------------------------------|
++-----------+-------------------+------------------------+----------------------------------+------------------------------------+
+| Package   | Description       | function               | rstanarm                         | brms                               |
++===========+===================+========================+==================================+====================================+
 | bayesplot | Traceplot         | `mcmc_trace`           | `plot(mod, plotfun='trace')`     | `mcmc_plot(mod, type='trace')`     |
++-----------+-------------------+------------------------+----------------------------------+------------------------------------+
 |           | Density plot      | `mcmc_dens`            | `plot(mod, plotfun='dens')`      | `mcmc_plot(mod, type='dens')`      |
++-----------+-------------------+------------------------+----------------------------------+------------------------------------+
 |           | Density & Trace   | `mcmc_combo`           | `plot(mod, plotfun='combo')`     | `mcmc_plot(mod, type='combo')`     |
++-----------+-------------------+------------------------+----------------------------------+------------------------------------+
 |           | ACF               | `mcmc_acf_bar`         | `plot(mod, plotfun='acf_bar')`   | `mcmc_plot(mod, type='acf_bar')`   |
++-----------+-------------------+------------------------+----------------------------------+------------------------------------+
 |           | Rhat hist         | `mcmc_rhat_hist`       | `plot(mod, plotfun='rhat_hist')` | `mcmc_plot(mod, type='rhat_hist')` |
++-----------+-------------------+------------------------+----------------------------------+------------------------------------+
 |           | No. Effective     | `mcmc_neff_hist`       | `plot(mod, plotfun='neff_hist')` | `mcmc_plot(mod, type='neff_hist')` |
++-----------+-------------------+------------------------+----------------------------------+------------------------------------+
 | rstan     | Traceplot         | `stan_trace`           | `stan_trace(mod)`                | `stan_trace(mod)`                  |
++-----------+-------------------+------------------------+----------------------------------+------------------------------------+
 |           | ACF               | `stan_ac`              | `stan_ac(mod)`                   | `stan_ac(mod)`                     |
++-----------+-------------------+------------------------+----------------------------------+------------------------------------+
 |           | Rhat              | `stan_rhat`            | `stan_rhat(mod)`                 | `stan_rhat(mod)`                   |
++-----------+-------------------+------------------------+----------------------------------+------------------------------------+
 |           | No. Effective     | `stan_ess`             | `stan_ess(mod)`                  | `stan_ess(mod)`                    |
++-----------+-------------------+------------------------+----------------------------------+------------------------------------+
 |           | Density plot      | `stan_dens`            | `stan_dens(mod)`                 | `stan_dens(mod)`                   |
++-----------+-------------------+------------------------+----------------------------------+------------------------------------+
 | ggmcmc    | Traceplot         | `ggs_traceplot`        | `ggs_traceplot(ggs(mod))`        | `ggs_traceplot(ggs(mod))`          |
++-----------+-------------------+------------------------+----------------------------------+------------------------------------+
 |           | ACF               | `ggs_autocorrelation`  | `ggs_autocorrelation(ggs(mod))`  | `ggs_autocorrelation(ggs(mod))`    |
++-----------+-------------------+------------------------+----------------------------------+------------------------------------+
 |           | Rhat              | `ggs_Rhat`             | `ggs_Rhat(ggs(mod))`             | `ggs_Rhat(ggs(mod))`               |
++-----------+-------------------+------------------------+----------------------------------+------------------------------------+
 |           | No. Effective     | `ggs_effective`        | `ggs_effective(ggs(mod))`        | `ggs_effective(ggs(mod))`          |
++-----------+-------------------+------------------------+----------------------------------+------------------------------------+
 |           | Cross correlation | `ggs_crosscorrelation` | `ggs_crosscorrelation(ggs(mod))` | `ggs_crosscorrelation(ggs(mod))`   |
++-----------+-------------------+------------------------+----------------------------------+------------------------------------+
 |           | Scale reduction   | `ggs_grb`              | `ggs_grb(ggs(mod))`              | `ggs_grb(ggs(mod))`                |
++-----------+-------------------+------------------------+----------------------------------+------------------------------------+
 |           |                   |                        |                                  |                                    |
-
++-----------+-------------------+------------------------+----------------------------------+------------------------------------+
 
 # Model validation {.tabset .tabset-faded}
 
@@ -156,116 +170,106 @@ $$
 
 `available_ppc()`
 
-| Package   | Description       | function                     | rstanarm                                               | brms                                               |
-|-----------|-------------------|------------------------------|-------------------------------------------------------|----------------------------------------------------|
++-----------+-------------------+------------------------------+-------------------------------------------------------+----------------------------------------------------+
+| Package   | Description       | function                     | rstanarm                                              | brms                                               |
++===========+===================+==============================+=======================================================+====================================================+
 | bayesplot | Density overlay   | `ppc_dens_overlay`           | `pp_check(mod, plotfun='dens_overlay')`               | `pp_check(mod, type='dens_overlay')`               |
++-----------+-------------------+------------------------------+-------------------------------------------------------+----------------------------------------------------+
 |           | Obs vs Pred error | `ppc_error_scatter_avg`      | `pp_check(mod, plotfun='error_scatter_avg')`          | `pp_check(mod, type='error_scatter_avg')`          |
++-----------+-------------------+------------------------------+-------------------------------------------------------+----------------------------------------------------+
 |           | Pred error vs x   | `ppc_error_scatter_avg_vs_x` | `pp_check(mod, x=, plotfun='error_scatter_avg_vs_x')` | `pp_check(mod, x=, type='error_scatter_avg_vs_x')` |
++-----------+-------------------+------------------------------+-------------------------------------------------------+----------------------------------------------------+
 |           | Preds vs x        | `ppc_intervals`              | `pp_check(mod, x=, plotfun='intervals')`              | `pp_check(mod, x=, type='intervals')`              |
++-----------+-------------------+------------------------------+-------------------------------------------------------+----------------------------------------------------+
 |           | Parial plot       | `ppc_ribbon`                 | `pp_check(mod, x=, plotfun='ribbon')`                 | `pp_check(mod, x=, type='ribbon')`                 |
++-----------+-------------------+------------------------------+-------------------------------------------------------+----------------------------------------------------+
 |           |                   |                              |                                                       |                                                    |
-
-
-
++-----------+-------------------+------------------------------+-------------------------------------------------------+----------------------------------------------------+
 
 # Partial effects plots {.tabset .tabset-faded}
 
-
 # Model investigation {.tabset .tabset-faded}
 
-
++-------------+-----------------------+------------------------------------------------------------------------------------------------------------------------------------+
 | Package     | Function              | Description                                                                                                                        |
-| --          | --                    | -----                                                                                                                              |
++=============+=======================+====================================================================================================================================+
 |             | `as.matrix()`         | Returns $n\times p$ matrix                                                                                                         |
++-------------+-----------------------+------------------------------------------------------------------------------------------------------------------------------------+
 | `tidybayes` | `tidy_draws()`        | Returns $n\times p$ tibble with addition info about the chain, iteration and draw                                                  |
++-------------+-----------------------+------------------------------------------------------------------------------------------------------------------------------------+
 | `tidybayes` | `spread_draws()`      | Returns $n\times r$ tibble (where $r$ is the number of requested parameters) with additional info about chain, iteraction and draw |
++-------------+-----------------------+------------------------------------------------------------------------------------------------------------------------------------+
 | `tidybayes` | `gather_draws()`      | Returns a gathered `spread_draws` tibble with additional info about chain, iteraction and draw                                     |
++-------------+-----------------------+------------------------------------------------------------------------------------------------------------------------------------+
 | `brms`      | `posterior_samples()` | Returns $n\times p$ data.frame                                                                                                     |
++-------------+-----------------------+------------------------------------------------------------------------------------------------------------------------------------+
 |             |                       |                                                                                                                                    |
++-------------+-----------------------+------------------------------------------------------------------------------------------------------------------------------------+
 |             |                       |                                                                                                                                    |
-where $n$ is the number of MCMC samples and $p$ is the number of parameters to
-estimate.
++-------------+-----------------------+------------------------------------------------------------------------------------------------------------------------------------+
+
+where $n$ is the number of MCMC samples and $p$ is the number of parameters to estimate.
 
 | Function      | Description                                                |
-| ---           | ---                                                        |
+|---------------|------------------------------------------------------------|
 | `median_qi`   | Median and quantiles                                       |
 | `median_hdi`  | Median and Highest Probability Density Interval            |
 | `median_hdci` | Median and continuous Highest Probability Density Interval |
 |               |                                                            |
 
-
-
-
-
 # Predictions {.tabset .tabset-faded}
 
-
-
 # Hypothesis testing {.tabset .tabset-faded}
-
-
-
 
 # Summary figures {.tabset .tabset-faded}
 
 ## rstanarm {.tabset .tabset-pills}
 
 ```{r summaryFig1a, results='markdown', eval=TRUE, hidden=TRUE}
-fert.list = with(fert, list(FERTILIZER = seq(min(FERTILIZER), max(FERTILIZER), len=100)))
-newdata = emmeans(fert.rstanarm3, ~FERTILIZER, at=fert.list) %>% as.data.frame
+fert_list = with(fert, list(fert = seq(min(fert), max(fert), len=100)))
+newdata = emmeans(fert_rstanarm3, ~fert, at=fert_list) %>% as.data.frame
 head(newdata)
 
-ggplot(newdata, aes(y=emmean, x=FERTILIZER)) + 
-geom_point(data=fert, aes(y=YIELD)) +
+ggplot(newdata, aes(y=emmean, x=fert)) + 
+geom_point(data=fert, aes(y=yield)) +
 geom_line() + 
 geom_ribbon(aes(ymin=lower.HPD, ymax=upper.HPD), fill='blue', alpha=0.3) +
-scale_y_continuous('YIELD') +
-scale_x_continuous('FERTILIZER') +
+scale_y_continuous('yield') +
+scale_x_continuous('fert') +
 theme_classic()
 
 ## spaghetti plot
-newdata = emmeans(fert.rstanarm3, ~FERTILIZER, at=fert.list) %>%
+newdata = emmeans(fert_rstanarm3, ~fert, at=fert_list) %>%
   gather_emmeans_draws()
 newdata %>% head
-ggplot(newdata,  aes(y=.value,  x=FERTILIZER)) +
+ggplot(newdata,  aes(y=.value,  x=fert)) +
   geom_line(aes(group=.draw),  alpha=0.01) +
-  geom_point(data=fert,  aes(y=YIELD))
+  geom_point(data=fert,  aes(y=yield))
 ```
 
 ## brms {.tabset .tabset-pills}
 
-
 ```{r summaryFig2a, results='markdown', eval=TRUE, hidden=TRUE}
-fert.list = with(fert, list(FERTILIZER = seq(min(FERTILIZER), max(FERTILIZER), len=100)))
-newdata = emmeans(fert.brm3, ~FERTILIZER, at=fert.list) %>% as.data.frame
+fert_list = with(fert, list(fert = seq(min(fert), max(fert), len=100)))
+newdata = emmeans(fert_brm3, ~fert, at=fert_list) %>% as.data.frame
 head(newdata)
 
-ggplot(newdata, aes(y=emmean, x=FERTILIZER)) + 
-geom_point(data=fert, aes(y=YIELD)) +
+ggplot(newdata, aes(y=emmean, x=fert)) + 
+geom_point(data=fert, aes(y=yield)) +
 geom_line() + 
 geom_ribbon(aes(ymin=lower.HPD, ymax=upper.HPD), fill='blue', alpha=0.3) +
-scale_y_continuous('YIELD') +
-scale_x_continuous('FERTILIZER') +
+scale_y_continuous('yield') +
+scale_x_continuous('fert') +
 theme_classic()
 
 ## spaghetti plot
-newdata = emmeans(fert.brm3, ~FERTILIZER, at=fert.list) %>%
+newdata = emmeans(fert_brm3, ~fert, at=fert_list) %>%
   gather_emmeans_draws()
 newdata %>% head
-ggplot(newdata,  aes(y=.value,  x=FERTILIZER)) +
+ggplot(newdata,  aes(y=.value,  x=fert)) +
   geom_line(aes(group=.draw),  alpha=0.01) +
-  geom_point(data=fert,  aes(y=YIELD))
+  geom_point(data=fert,  aes(y=yield))
   
 ```
 
-
-
-
-
-
-
-
-
 # References
-
-                                 

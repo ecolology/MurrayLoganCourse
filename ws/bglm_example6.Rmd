@@ -39,6 +39,8 @@ mathfont: LiberationMono
 monofont: DejaVu Sans Mono
 classoption: a4paper
 bibliography: ../resources/references.bib
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r setup, include=FALSE, warnings=FALSE, message=FALSE}
@@ -61,6 +63,7 @@ library(broom)      #for tidying outputs
 library(tidybayes)  #for more tidying outputs
 library(ggeffects)  #for partial plots
 library(tidyverse)  #for data wrangling etc
+theme_set(theme_classic())
 ```
 
 # Scenario
@@ -79,7 +82,7 @@ and season combination.
 
 Format of quinn.csv data files
 
-SEASON   DENSITY   RECRUITS   SQRTRECRUITS   GROUP
+season   density   recruits   sqrtrecruits   GROUP
 -------- --------- ---------- -------------- ------------
 Spring   Low       15         3.87           SpringLow
 ..       ..        ..         ..             ..
@@ -93,11 +96,11 @@ Autumn   Low       14         3.74           AutumnLow
 ..       ..        ..         ..             ..
 
 ------------------ --------------------------------------------------------------------------------------------
-**SEASON**         Categorical listing of Season in which mussel clumps were collected ­ independent variable
-**DENSITY**        Categorical listing of the density of mussels within mussel clump ­ independent variable
-**RECRUITS**       The number of mussel recruits ­ response variable
-**SQRTRECRUITS**   Square root transformation of RECRUITS - needed to meet the test assumptions
-**GROUPS**         Categorical listing of Season/Density combinations - used for checking ANOVA assumptions
+**season**         Categorical listing of Season in which mussel clumps were collected ­ independent variable
+**density**        Categorical listing of the density of mussels within mussel clump ­ independent variable
+**recruits**       The number of mussel recruits ­ response variable
+**sqrtrecruits**   Square root transformation of recruits - needed to meet the test assumptions
+**groups**         Categorical listing of Season/Density combinations - used for checking ANOVA assumptions
 ------------------ --------------------------------------------------------------------------------------------
 
 ![Mussel](../resources/mussels.jpg){height="300"}
@@ -105,16 +108,17 @@ Autumn   Low       14         3.74           AutumnLow
 # Read in the data
 
 ```{r readData, results='markdown', eval=TRUE}
-quinn = read_csv('../data/quinn.csv', trim_ws=TRUE)
+quinn <- read_csv('../data/quinn.csv', trim_ws=TRUE) %>%
+  janitor::clean_names()
 glimpse(quinn)
 summary(quinn)
 ```
 
 ```{r dataprep, results='markdown', eval=TRUE}
 quinn = quinn %>%
-  mutate(SEASON = factor(SEASON,
+  mutate(season = factor(season,
                          levels=c('Spring', 'Summer', 'Autumn', 'Winter')),
-                         DENSITY = factor(DENSITY))
+                         density = factor(density))
 ```
 
 	
@@ -137,18 +141,18 @@ where $\boldsymbol{\beta}$ is a vector of effects parameters and $\bf{X}$ is a m
 
 ```{r fitModel, results='markdown', eval=FALSE, hidden=TRUE}
 head(quinn)
-ggplot(quinn, aes(y=RECRUITS, x=SEASON, fill=DENSITY)) + geom_boxplot()
+ggplot(quinn, aes(y=recruits, x=season, fill=density)) + geom_boxplot()
 library(rstanarm)
 ##Poisson
-quinn.rstanarmP <- stan_glm(RECRUITS~SEASON*DENSITY, data=quinn,
+quinn_rstanarmP <- stan_glm(recruits~season*density, data=quinn,
                          family=poisson(link='log'),refresh=0,
                          chains = 3, iter = 5000, thin=5, warmup=2000)
-prior_summary(quinn.rstanarmP)
+prior_summary(quinn_rstanarmP)
 
 
-prior_summary(quinn.rstanarmP)
+prior_summary(quinn_rstanarmP)
 
-quinn.rstanarm1 <- stan_glm(RECRUITS~SEASON*DENSITY, data=quinn,
+quinn_rstanarm1 <- stan_glm(recruits~season*density, data=quinn,
                             family=poisson(link='log'),
                             prior_intercept = normal(2.3, 5, autoscale=FALSE),
                             prior=normal(0, 2, autoscale=FALSE),
@@ -156,43 +160,43 @@ quinn.rstanarm1 <- stan_glm(RECRUITS~SEASON*DENSITY, data=quinn,
                             refresh=0,
                          chains = 3, iter = 5000, thin=5, warmup=2000)
 
-ggpredict(quinn.rstanarm1,  ~SEASON+DENSITY) %>% plot()
-ggemmeans(quinn.rstanarmP,  ~SEASON+DENSITY) %>%
+ggpredict(quinn_rstanarm1,  ~season+density) %>% plot()
+ggemmeans(quinn_rstanarmP,  ~season+density) %>%
   plot(add.data=TRUE)
 
-quinn.rstanarm3= update(quinn.rstanarm1,  prior_PD=FALSE) 
-posterior_vs_prior(quinn.rstanarm3, color_by='vs', group_by=TRUE,
+quinn_rstanarm3= update(quinn_rstanarm1,  prior_PD=FALSE) 
+posterior_vs_prior(quinn_rstanarm3, color_by='vs', group_by=TRUE,
                    facet_args=list(scales='free_y'))
 
-ggpredict(quinn.rstanarm3,  ~SEASON+DENSITY) %>% plot(add.data=TRUE)
-ggemmeans(quinn.rstanarm3,  ~SEASON+DENSITY) %>% plot(add.data=TRUE)
+ggpredict(quinn_rstanarm3,  ~season+density) %>% plot(add.data=TRUE)
+ggemmeans(quinn_rstanarm3,  ~season+density) %>% plot(add.data=TRUE)
 
 
 
-plot(quinn.rstanarm3,  plotfun='mcmc_trace')
-plot(quinn.rstanarm3,  'mcmc_acf_bar')
-plot(quinn.rstanarm3,  'mcmc_rhat_hist')
-plot(quinn.rstanarm3,  'mcmc_neff_hist')
+plot(quinn_rstanarm3,  plotfun='mcmc_trace')
+plot(quinn_rstanarm3,  'mcmc_acf_bar')
+plot(quinn_rstanarm3,  'mcmc_rhat_hist')
+plot(quinn_rstanarm3,  'mcmc_neff_hist')
 
 
-preds <- posterior_predict(quinn.rstanarm3,  nsamples=250,  summary=FALSE)
-quinn.resids <- createDHARMa(simulatedResponse = t(preds),
-                            observedResponse = quinn$RECRUITS,
+preds <- posterior_predict(quinn_rstanarm3,  nsamples=250,  summary=FALSE)
+quinn_resids <- createDHARMa(simulatedResponse = t(preds),
+                            observedResponse = quinn$recruits,
                             fittedPredictedResponse = apply(preds, 2, median), 
                             integerResponse=TRUE)
-plot(quinn.resids)
-testZeroInflation(quinn.resids)
+plot(quinn_resids)
+testZeroInflation(quinn_resids)
 
 
 #pp_check(day.rstanarm, x=as.numeric(day$TREAT),'intervals')
-quinn.rstanarmNB <- stan_glm(RECRUITS~SEASON*DENSITY, data=quinn,
+quinn_rstanarmNB <- stan_glm(recruits~season*density, data=quinn,
                         family=neg_binomial_2(link='log'), refresh=0,
                         chains = 3,iter = 5000, thin=5,warmup=2000)
-prior_summary(quinn.rstanarmNB)
-ggpredict(quinn.rstanarmNB,  ~SEASON*DENSITY) %>% plot(add.data=TRUE)
+prior_summary(quinn_rstanarmNB)
+ggpredict(quinn_rstanarmNB,  ~season*density) %>% plot(add.data=TRUE)
 
 set.seed(123)
-quinn.rstanarmNB <- stan_glm(RECRUITS~SEASON*DENSITY, data=quinn,
+quinn_rstanarmNB <- stan_glm(recruits~season*density, data=quinn,
                         family=neg_binomial_2(link='log'), refresh=0,
                         prior_intercept = normal(2.3, 5, autoscale=FALSE),
                         prior=normal(0, 1, autoscale=FALSE),
@@ -200,137 +204,137 @@ quinn.rstanarmNB <- stan_glm(RECRUITS~SEASON*DENSITY, data=quinn,
                         prior_PD=TRUE, 
                         chains = 3,iter = 5000, thin=5,warmup=2000)
 
-quinn.rstanarmNB <- stan_glm(RECRUITS~SEASON*DENSITY, data=quinn,
+quinn_rstanarmNB <- stan_glm(recruits~season*density, data=quinn,
                         family=neg_binomial_2(link='log'), refresh=0,
                         prior_intercept = normal(2.3, 2.5, autoscale=FALSE),
                         prior=normal(0, 1, autoscale=FALSE),
                         prior_aux=rstanarm::exponential(1, autoscale=FALSE), 
                         prior_PD=TRUE, 
                         chains = 3,iter = 5000, thin=5,warmup=2000)
-ggpredict(quinn.rstanarmNB,  ~SEASON+DENSITY) %>% plot(add.data=TRUE)
-p = ggpredict(quinn.rstanarmNB) %>% plot(add.data=TRUE)
+ggpredict(quinn_rstanarmNB,  ~season+density) %>% plot(add.data=TRUE)
+p = ggpredict(quinn_rstanarmNB) %>% plot(add.data=TRUE)
 p[[1]] + p[[2]]
 
-ggemmeans(quinn.rstanarmNB,  ~SEASON+DENSITY) %>%
+ggemmeans(quinn_rstanarmNB,  ~season+density) %>%
   plot(add.data=TRUE)
 
-quinn.rstanarmNB= update(quinn.rstanarmNB,  prior_PD=FALSE) 
-posterior_vs_prior(quinn.rstanarmNB, color_by='vs', group_by=TRUE,
+quinn_rstanarmNB= update(quinn_rstanarmNB,  prior_PD=FALSE) 
+posterior_vs_prior(quinn_rstanarmNB, color_by='vs', group_by=TRUE,
                    facet_args=list(scales='free_y'))
 
-p = ggpredict(quinn.rstanarmNB) %>% plot(add.data=TRUE)
+p = ggpredict(quinn_rstanarmNB) %>% plot(add.data=TRUE)
 p[[1]] + p[[2]]
 
-ggemmeans(quinn.rstanarmNB,  ~SEASON+DENSITY) %>% plot(add.data=TRUE)
+ggemmeans(quinn_rstanarmNB,  ~season+density) %>% plot(add.data=TRUE)
 
-plot(quinn.rstanarmNB,  'mcmc_trace')
-plot(quinn.rstanarmNB,  'mcmc_acf_bar')
-plot(quinn.rstanarmNB,  'mcmc_rhat_hist')
-plot(quinn.rstanarmNB,  'mcmc_neff_hist')
+plot(quinn_rstanarmNB,  'mcmc_trace')
+plot(quinn_rstanarmNB,  'mcmc_acf_bar')
+plot(quinn_rstanarmNB,  'mcmc_rhat_hist')
+plot(quinn_rstanarmNB,  'mcmc_neff_hist')
 
 
-preds <- posterior_predict(quinn.rstanarmNB,  nsamples=250,  summary=FALSE)
-quinn.resids <- createDHARMa(simulatedResponse = t(preds),
-                            observedResponse = quinn$RECRUITS,
+preds <- posterior_predict(quinn_rstanarmNB,  nsamples=250,  summary=FALSE)
+quinn_resids <- createDHARMa(simulatedResponse = t(preds),
+                            observedResponse = quinn$recruits,
                             fittedPredictedResponse = apply(preds, 2, median),
                             integerResponse=TRUE)
-plot(quinn.resids)
+plot(quinn_resids)
 
-prior_summary(quinn.rstanarmNB)
-(loo.P = loo(quinn.rstanarmP))
-(loo.NB = loo(quinn.rstanarmNB))
+prior_summary(quinn_rstanarmNB)
+(loo.P = loo(quinn_rstanarmP))
+(loo.NB = loo(quinn_rstanarmNB))
 loo_compare(loo.P, loo.NB)
 
-posterior_vs_prior(quinn.rstanarmNB, color_by='vs', group_by=TRUE,
+posterior_vs_prior(quinn_rstanarmNB, color_by='vs', group_by=TRUE,
                    facet_args=list(scales='free_y'))
 
 
-ggplot() + geom_point(data=NULL, aes(y=quinn.resids$scaledResiduals, x=quinn$SEASON))
-ggplot() + geom_point(data=NULL, aes(y=quinn.resids$scaledResiduals, x=quinn$DENSITY))
+ggplot() + geom_point(data=NULL, aes(y=quinn_resids$scaledResiduals, x=quinn$season))
+ggplot() + geom_point(data=NULL, aes(y=quinn_resids$scaledResiduals, x=quinn$density))
 
-## stan_trace(quinn.rstanarm)
-## stan_dens(quinn.rstanarm,separate_chains=TRUE)
-## stan_ac(quinn.rstanarm)
-## stan_rhat(quinn.rstanarm)
-## stan_ess(quinn.rstanarm)
+## stan_trace(quinn_rstanarm)
+## stan_dens(quinn_rstanarm,separate_chains=TRUE)
+## stan_ac(quinn_rstanarm)
+## stan_rhat(quinn_rstanarm)
+## stan_ess(quinn_rstanarm)
 
-## pp_check(quinn.rstanarm)
+## pp_check(quinn_rstanarm)
 ## available_ppc()
-## pp_check(quinn.rstanarm, x=quinn$SEASON,'boxplot')
-## pp_check(quinn.rstanarm, group=interaction(quinn$DENSITY,quinn$SEASON),
+## pp_check(quinn_rstanarm, x=quinn$season,'boxplot')
+## pp_check(quinn_rstanarm, group=interaction(quinn$density,quinn$season),
 ##          'stat_grouped')
-## pp_check(quinn.rstanarm, x=as.numeric(quinn$SEASON),group=quinn$DENSITY,
+## pp_check(quinn_rstanarm, x=as.numeric(quinn$season),group=quinn$density,
 ##          plotfun='intervals_grouped')
-## #pp_check(quinn.rstanarm, x=as.numeric(quinn$SEASON), plotfun='error_scatter_avg_vs_x')
+## #pp_check(quinn_rstanarm, x=as.numeric(quinn$season), plotfun='error_scatter_avg_vs_x')
 
 
-ggemmeans(quinn.rstanarmNB,  ~SEASON*DENSITY) %>% plot
-ggpredict(quinn.rstanarmNB,  ~SEASON*DENSITY) %>% plot
+ggemmeans(quinn_rstanarmNB,  ~season*density) %>% plot
+ggpredict(quinn_rstanarmNB,  ~season*density) %>% plot
 library(patchwork)
 g[[1]] + g[[2]]
 do.call('+', g)
 
-summary(quinn.rstanarmNB)
-tidyMCMC(quinn.rstanarmNB$stanfit,
+summary(quinn_rstanarmNB)
+tidyMCMC(quinn_rstanarmNB$stanfit,
          estimate.method='median', 
          conf.int=TRUE, conf.method='HPDinterval',
          rhat=TRUE, ess=TRUE) %>% knitr::kable()
 ## express this on response scale
-quinn.rstanarmNB %>% get_variables()
-quinn.rstanarmNB %>%
-  gather_draws(`.Intercept.*|SEASON.*|DENSITY.*`, regex=TRUE) %>%
+quinn_rstanarmNB %>% get_variables()
+quinn_rstanarmNB %>%
+  gather_draws(`.Intercept.*|season.*|density.*`, regex=TRUE) %>%
   group_by(.variable) %>%
   mutate(.value=exp(.value)) %>%
   median_hdci
 
-newdata = emmeans(quinn.rstanarmNB, ~SEASON|DENSITY, type='response') %>%
+newdata = emmeans(quinn_rstanarmNB, ~season|density, type='response') %>%
     as.data.frame
 head(newdata)
-ggplot(newdata, aes(y=prob, x=SEASON, fill=DENSITY)) +
+ggplot(newdata, aes(y=prob, x=season, fill=density)) +
     geom_pointrange(aes(ymin=lower.HPD, ymax=upper.HPD), shape=21,
                     position=position_dodge(width=0.5)) +
-    #geom_line(aes(x=as.numeric(SEASON))) +
+    #geom_line(aes(x=as.numeric(season))) +
     theme_bw()
 
 
-bayes_R2(quinn.rstanarmNB) %>% median_hdi
+bayes_R2(quinn_rstanarmNB) %>% median_hdi
 
 ## Compare effect of density separate within each season
-emmeans(quinn.rstanarmNB, pairwise~DENSITY|SEASON, type='response') 
-emmeans(quinn.rstanarmNB, pairwise~DENSITY|SEASON, type='response')$contrast 
-quinn.em = emmeans(quinn.rstanarmNB, pairwise~DENSITY|SEASON, type='link')$contrast %>%
+emmeans(quinn_rstanarmNB, pairwise~density|season, type='response') 
+emmeans(quinn_rstanarmNB, pairwise~density|season, type='response')$contrast 
+quinn_em = emmeans(quinn_rstanarmNB, pairwise~density|season, type='link')$contrast %>%
   gather_emmeans_draws() %>% 
   mutate(Fit=exp(.value))
-head(quinn.em)
+head(quinn_em)
 
-g2 = quinn.em %>%
-  group_by(contrast, SEASON) %>%
+g2 = quinn_em %>%
+  group_by(contrast, season) %>%
   median_hdci %>%
-    ggplot() + geom_pointrange(aes(y=Fit, x=SEASON, ymin=Fit.lower, ymax=Fit.upper)) + 
+    ggplot() + geom_pointrange(aes(y=Fit, x=season, ymin=Fit.lower, ymax=Fit.upper)) + 
     geom_hline(yintercept=1, linetype='dashed') + coord_flip() +
     scale_y_continuous('Effect size (High/Low)')
 
-ggplot(quinn.em, aes(x=Fit)) +
+ggplot(quinn_em, aes(x=Fit)) +
     geom_histogram() +
-    facet_wrap(SEASON~contrast, scales='free')
-quinn.em %>% group_by(contrast, SEASON) %>% median_hdci(Fit)
+    facet_wrap(season~contrast, scales='free')
+quinn_em %>% group_by(contrast, season) %>% median_hdci(Fit)
 # Probability of effect
-quinn.em %>% group_by(contrast,SEASON) %>% summarize(P=sum(Fit>1)/n())
+quinn_em %>% group_by(contrast,season) %>% summarize(P=sum(Fit>1)/n())
 ##Probability of effect greater than 10%
-quinn.em %>% group_by(contrast,SEASON) %>% summarize(P=sum(Fit>1.1)/n())
+quinn_em %>% group_by(contrast,season) %>% summarize(P=sum(Fit>1.1)/n())
 
-quinn.em1 <-
-  emmeans(quinn.rstanarmNB, ~DENSITY|SEASON, type='link') %>%
+quinn_em1 <-
+  emmeans(quinn_rstanarmNB, ~density|season, type='link') %>%
   gather_emmeans_draws() %>%
   mutate(Fit = exp(.value))
   
 
 
-bayes_R2(quinn.rstanarmNB) %>% median_hdci
+bayes_R2(quinn_rstanarmNB) %>% median_hdci
 
-newdata = emmeans(quinn.rstanarmNB, ~SEASON|DENSITY, type='response') %>% as.data.frame
+newdata = emmeans(quinn_rstanarmNB, ~season|density, type='response') %>% as.data.frame
 head(newdata)
-g1 = ggplot(newdata, aes(y=prob, x=SEASON, color=DENSITY)) +
+g1 = ggplot(newdata, aes(y=prob, x=season, color=density)) +
     geom_pointrange(aes(ymin=lower.HPD, ymax=upper.HPD),
                     position=position_dodge(width=0.2))
 library(patchwork)
@@ -340,41 +344,41 @@ grid.arrange(g1, g2, nrow=1)
 
 
 
-loo(quinn.rstanarmP)
+loo(quinn_rstanarmP)
 
-quinn.rstanarm1 <- stan_glm(RECRUITS~SEASON+DENSITY, data=quinn,
+quinn_rstanarm1 <- stan_glm(recruits~season+density, data=quinn,
                         family='neg_binomial_2',
                        prior = normal(0, 1),
                        prior_intercept = normal(0,10),
                        prior_aux=cauchy(0,2),
                        chains = 3,iter = 2000, thin=2,warmup=1000)
 
-quinn.rstanarm <- stan_glm(RECRUITS~SEASON*DENSITY, data=quinn,
+quinn_rstanarm <- stan_glm(recruits~season*density, data=quinn,
                         family='neg_binomial_2',
                        prior = normal(0, 10),
                        prior_intercept = normal(0,10),
                        prior_aux=cauchy(0,2),
                        chains = 3,iter = 2000, thin=2,warmup=1000)
-quinn.rstanarm1 <- stan_glm(RECRUITS~SEASON+DENSITY, data=quinn,
+quinn_rstanarm1 <- stan_glm(recruits~season+density, data=quinn,
                         family='neg_binomial_2',
                        prior = normal(0, 10),
                        prior_intercept = normal(0,10),
                        prior_aux=cauchy(0,2),
                        chains = 3,iter = 2000, thin=2,warmup=1000)
 
-l1 = loo(quinn.rstanarm)
-l2 = loo(quinn.rstanarm1)
+l1 = loo(quinn_rstanarm)
+l2 = loo(quinn_rstanarm1)
 compare_models(l1,l2)
 
-newdata <- with(quinn,expand.grid(SEASON=levels(SEASON),
-                                  DENSITY=levels(DENSITY)))
-Xmat<- model.matrix(~SEASON*DENSITY, data=newdata)
-as.matrix(quinn.rstanarm) %>% head
+newdata <- with(quinn,expand.grid(season=levels(season),
+                                  density=levels(density)))
+Xmat<- model.matrix(~season*density, data=newdata)
+as.matrix(quinn_rstanarm) %>% head
 coefs = as.matrix(quin.rstanarm)
-coefs = as.matrix(as.data.frame(quinn.rstanarm) %>%
+coefs = as.matrix(as.data.frame(quinn_rstanarm) %>%
                   dplyr:::select(-reciprocal_dispersion)) %>%
     as.matrix
-coefs = as.data.frame(quinn.rstanarm) %>%
+coefs = as.data.frame(quinn_rstanarm) %>%
     dplyr:::select(-reciprocal_dispersion) %>%
     as.matrix
 fit = exp(coefs %*% t(Xmat))
@@ -382,21 +386,21 @@ newdata = newdata %>%
     cbind(tidyMCMC(fit, conf.int=TRUE, conf.method='HPDinterval'))
 head(newdata)
 
-ggplot(newdata, aes(y=estimate, x=SEASON, fill=DENSITY)) +
+ggplot(newdata, aes(y=estimate, x=season, fill=density)) +
 geom_blank() +
-geom_line(aes(x=as.numeric(SEASON), ymin=conf.low, ymax=conf.high, linetype=DENSITY))+
+geom_line(aes(x=as.numeric(season), ymin=conf.low, ymax=conf.high, linetype=density))+
 geom_pointrange(aes(ymin=conf.low, ymax=conf.high), shape=21) 
 
 #Compare high and low in each season
 #via contrasts
-newdata <- with(quinn,expand.grid(SEASON=levels(SEASON),DENSITY=levels(DENSITY)))
+newdata <- with(quinn,expand.grid(season=levels(season),density=levels(density)))
 ## factor differences
-Xmat<- model.matrix(~SEASON*DENSITY, data=newdata)
-Xmat.high <- Xmat[newdata$DENSITY=="High",]
-Xmat.low <- Xmat[newdata$DENSITY=="Low",]
+Xmat<- model.matrix(~season*density, data=newdata)
+Xmat.high <- Xmat[newdata$density=="High",]
+Xmat.low <- Xmat[newdata$density=="Low",]
 Xmat.density <- Xmat.high-Xmat.low
-rownames(Xmat.density) <- levels(quinn$SEASON)
-coefs = as.matrix(as.data.frame(quinn.rstanarm) %>% dplyr:::select(-reciprocal_dispersion))
+rownames(Xmat.density) <- levels(quinn$season)
+coefs = as.matrix(as.data.frame(quinn_rstanarm) %>% dplyr:::select(-reciprocal_dispersion))
 fit = exp(coefs %*% t(Xmat.density))
 tidyMCMC(fit, conf.int=TRUE, conf.method='HPDinterval')
 ## or absolute
@@ -409,143 +413,143 @@ tidyMCMC(fit, conf.int=TRUE, conf.method='HPDinterval')
 
 ```{r fitModel.brms, results='markdown', eval=FALSE, hidden=TRUE}
 head(quinn)
-ggplot(quinn, aes(y=RECRUITS, x=SEASON, fill=DENSITY)) + geom_boxplot()
+ggplot(quinn, aes(y=recruits, x=season, fill=density)) + geom_boxplot()
 library(rstanarm)
 ##Poisson
-quinn.form <- bf(RECRUITS ~ SEASON*DENSITY,  family=poisson(link='log'))
-get_prior(quinn.form,  data=quinn)
+quinn_form <- bf(recruits ~ season*density,  family=poisson(link='log'))
+get_prior(quinn_form,  data=quinn)
 
-quinn.brmsP <- brm(quinn.form, data=quinn,
+quinn_brmsP <- brm(quinn_form, data=quinn,
                          refresh=0,
                          chains = 3, iter = 5000, thin=5, warmup=2000)
 
-mcmc_plot(quinn.brmsP,  type='trace')
-mcmc_plot(quinn.brmsP,  type='acf_bar')
-mcmc_plot(quinn.brmsP,  type='rhat_hist')
-mcmc_plot(quinn.brmsP,  type='neff_hist')
+mcmc_plot(quinn_brmsP,  type='trace')
+mcmc_plot(quinn_brmsP,  type='acf_bar')
+mcmc_plot(quinn_brmsP,  type='rhat_hist')
+mcmc_plot(quinn_brmsP,  type='neff_hist')
 
 
-preds <- posterior_predict(quinn.brmsP,  nsamples=250,  summary=FALSE)
-quinn.resids <- createDHARMa(simulatedResponse = t(preds),
-                            observedResponse = quinn$RECRUITS,
+preds <- posterior_predict(quinn_brmsP,  nsamples=250,  summary=FALSE)
+quinn_resids <- createDHARMa(simulatedResponse = t(preds),
+                            observedResponse = quinn$recruits,
                             fittedPredictedResponse = apply(preds, 2, median),
                             integerResponse = TRUE)
-plot(quinn.resids)
+plot(quinn_resids)
 
 
-quinn.form <- bf(RECRUITS ~ SEASON*DENSITY,  family=negbinomial(link='log'))
-get_prior(quinn.form,  data=quinn)
+quinn_form <- bf(recruits ~ season*density,  family=negbinomial(link='log'))
+get_prior(quinn_form,  data=quinn)
 
-quinn.brmsNB <- brm(quinn.form, data=quinn,
+quinn_brmsNB <- brm(quinn_form, data=quinn,
                          refresh=0,
                          chains = 3, iter = 5000, thin=5, warmup=2000)
 
-mcmc_plot(quinn.brmsNB,  type='trace')
-mcmc_plot(quinn.brmsNB,  type='acf_bar')
-mcmc_plot(quinn.brmsNB,  type='rhat_hist')
-mcmc_plot(quinn.brmsNB,  type='neff_hist')
+mcmc_plot(quinn_brmsNB,  type='trace')
+mcmc_plot(quinn_brmsNB,  type='acf_bar')
+mcmc_plot(quinn_brmsNB,  type='rhat_hist')
+mcmc_plot(quinn_brmsNB,  type='neff_hist')
 
 
-preds <- posterior_predict(quinn.brmsNB,  nsamples=250,  summary=FALSE)
-quinn.resids <- createDHARMa(simulatedResponse = t(preds),
-                            observedResponse = quinn$RECRUITS,
+preds <- posterior_predict(quinn_brmsNB,  nsamples=250,  summary=FALSE)
+quinn_resids <- createDHARMa(simulatedResponse = t(preds),
+                            observedResponse = quinn$recruits,
                             fittedPredictedResponse = apply(preds, 2, median),
                             integerResponse=TRUE)
-plot(quinn.resids)
+plot(quinn_resids)
 #pp_check(day.rstanarm, x=as.numeric(day$TREAT),'intervals')
 
-(loo.P = loo(quinn.brmsP))
-(loo.NB = loo(quinn.brmsNB))
+(loo.P = loo(quinn_brmsP))
+(loo.NB = loo(quinn_brmsNB))
 loo_compare(loo.P, loo.NB)
 
 ggplot() +
-  geom_point(data=NULL, aes(y=quinn.resids$scaledResiduals, x=quinn$SEASON))
+  geom_point(data=NULL, aes(y=quinn_resids$scaledResiduals, x=quinn$season))
 ggplot() +
-  geom_point(data=NULL, aes(y=quinn.resids$scaledResiduals, x=quinn$DENSITY))
+  geom_point(data=NULL, aes(y=quinn_resids$scaledResiduals, x=quinn$density))
 
 
-#g=ggpredict(quinn.brmsNB) %>% plot
-ggemmeans(quinn.brmsNB, terms=~SEASON*DENSITY) %>% plot
+#g=ggpredict(quinn_brmsNB) %>% plot
+ggemmeans(quinn_brmsNB, terms=~season*density) %>% plot
 #g[[1]] + g[[2]]
 #do.call('grid.arrange', g)
 
-summary(quinn.brmsNB)
-tidyMCMC(quinn.brmsNB$fit,
+summary(quinn_brmsNB)
+tidyMCMC(quinn_brmsNB$fit,
          estimate.method='median', 
          conf.int=TRUE, conf.method='HPDinterval',
          rhat=TRUE, ess=TRUE)
-emmeans(quinn.brmsNB, pairwise~SEASON, type='link')
-newdata =  emmeans(quinn.brmsNB, ~SEASON|DENSITY, type='response') %>%
+emmeans(quinn_brmsNB, pairwise~season, type='link')
+newdata =  emmeans(quinn_brmsNB, ~season|density, type='response') %>%
     as.data.frame
 head(newdata)
-ggplot(newdata, aes(y=prob, x=SEASON, fill=DENSITY)) +
+ggplot(newdata, aes(y=prob, x=season, fill=density)) +
     geom_pointrange(aes(ymin=lower.HPD, ymax=upper.HPD), shape=21,
                     position=position_dodge(width=0.5)) +
-    #geom_line(aes(x=as.numeric(SEASON))) +
+    #geom_line(aes(x=as.numeric(season))) +
     theme_bw()
 
 
-bayes_R2(quinn.brmsNB, summary=FALSE) %>% median_hdi
+bayes_R2(quinn_brmsNB, summary=FALSE) %>% median_hdi
 
 ## Compare effect of density separate within each season
-emmeans(quinn.brmsNB, pairwise~DENSITY|SEASON, type='response') 
-quinn.em = emmeans(quinn.brmsNB, pairwise~DENSITY|SEASON, type='link')$contrast %>%
+emmeans(quinn_brmsNB, pairwise~density|season, type='response') 
+quinn_em = emmeans(quinn_brmsNB, pairwise~density|season, type='link')$contrast %>%
   gather_emmeans_draws() %>% 
   mutate(Fit=exp(.value))
-head(quinn.em)
+head(quinn_em)
 
-g2 = quinn.em %>%
-  group_by(contrast, SEASON) %>%
+g2 = quinn_em %>%
+  group_by(contrast, season) %>%
   median_hdi %>%
   ggplot() +
-  geom_pointrange(aes(y=Fit, x=SEASON, ymin=Fit.lower, ymax=Fit.upper)) + 
+  geom_pointrange(aes(y=Fit, x=season, ymin=Fit.lower, ymax=Fit.upper)) + 
   geom_hline(yintercept=1, linetype='dashed') + coord_flip() +
   scale_y_continuous('Effect size (High/Low)')
 g2
 
-ggplot(quinn.em, aes(x=Fit)) +
+ggplot(quinn_em, aes(x=Fit)) +
     geom_histogram() +
-  facet_wrap(SEASON~contrast, scales='free')
-quinn.em %>% group_by(contrast, SEASON) %>% mean_hdci()
+  facet_wrap(season~contrast, scales='free')
+quinn_em %>% group_by(contrast, season) %>% mean_hdci()
 # Probability of effect
-quinn.em %>% group_by(contrast,SEASON) %>% summarize(P=sum(Fit>1)/n())
+quinn_em %>% group_by(contrast,season) %>% summarize(P=sum(Fit>1)/n())
 ##Probability of effect greater than 10%
-quinn.em %>% group_by(contrast,SEASON) %>% summarize(P=sum(Fit>1.1)/n())
+quinn_em %>% group_by(contrast,season) %>% summarize(P=sum(Fit>1.1)/n())
 
 
 
-bayes_R2(quinn.brmsNB, summary=FALSE) %>% median_hdi
+bayes_R2(quinn_brmsNB, summary=FALSE) %>% median_hdi
 
-newdata = emmeans(quinn.brmsNB, ~SEASON|DENSITY, type='response') %>% as.data.frame
+newdata <- emmeans(quinn_brmsNB, ~season|density, type='response') %>% as.data.frame
 head(newdata)
-g1 = ggplot(newdata, aes(y=prob, x=SEASON, color=DENSITY)) +
+g1 = ggplot(newdata, aes(y=prob, x=season, color=density)) +
     geom_pointrange(aes(ymin=lower.HPD, ymax=upper.HPD),
                     position=position_dodge(width=0.2))
 library(patchwork)
 g1 + g2
-#grid.arrange(g1, g2, nrow=1)
+# grid.arrange(g1, g2, nrow=1)
 
 
 
 quinn = quinn %>%
-  group_by(SEASON, DENSITY) %>%
+  group_by(season, density) %>%
   mutate(Obs=factor(1:n()))
 
-quinn.form <- bf(RECRUITS ~ SEASON*DENSITY + (1|Obs),  family=poisson(link='log'))
-get_prior(quinn.form,  data=quinn)
+quinn_form <- bf(recruits ~ season*density + (1|Obs),  family=poisson(link='log'))
+get_prior(quinn_form,  data=quinn)
 
-quinn.brmsU <- brm(quinn.form, data=quinn,
+quinn_brmsU <- brm(quinn_form, data=quinn,
                          refresh=0,
                          chains = 3, iter = 5000, thin=5, warmup=2000)
 
-preds <- posterior_predict(quinn.brmsU,  nsamples=250,  summary=FALSE)
-quinn.resids <- createDHARMa(simulatedResponse = t(preds),
-                            observedResponse = quinn$RECRUITS,
+preds <- posterior_predict(quinn_brmsU,  nsamples=250,  summary=FALSE)
+quinn_resids <- createDHARMa(simulatedResponse = t(preds),
+                            observedResponse = quinn$recruits,
                             fittedPredictedResponse = apply(preds, 2, median))
-plot(quinn.resids)
-newdata = emmeans(quinn.brmsU, ~SEASON|DENSITY, type='response') %>% as.data.frame
+plot(quinn_resids)
+newdata = emmeans(quinn_brmsU, ~season|density, type='response') %>% as.data.frame
 newdata
-ggplot(newdata, aes(y=rate, x=SEASON, color=DENSITY)) +
+ggplot(newdata, aes(y=rate, x=season, color=density)) +
     geom_pointrange(aes(ymin=lower.HPD, ymax=upper.HPD),
                     position=position_dodge(width=0.2))
 

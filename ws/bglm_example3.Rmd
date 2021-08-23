@@ -39,6 +39,8 @@ mathfont: LiberationMono
 monofont: DejaVu Sans Mono
 classoption: a4paper
 bibliography: ../resources/references.bib
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r setup, include=FALSE}
@@ -64,7 +66,7 @@ library(ggeffects)  #for partial plots
 library(tidyverse)  #for data wrangling etc
 library(broom.mixed)#for summarising models
 library(ggeffects)  #for partial effects plots
-theme_set(theme_grey()) #put the default ggplot theme back
+theme_set(theme_classic()) #put the default ggplot theme back
 ```
 
 # Scenario
@@ -96,7 +98,8 @@ The aim of the analysis is to investigate the relationship between mussel clump 
 # Read in the data
 
 ```{r readData, results='markdown', eval=TRUE}
-peake = read_csv('../data/peakquinn.csv', trim_ws=TRUE)
+peake <- read_csv('../data/peakquinn.csv', trim_ws=TRUE) %>%
+  janitor::clean_names()
 glimpse(peake)
 ```
 
