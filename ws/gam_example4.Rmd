@@ -1,5 +1,5 @@
 ---
-title: "GAM Part4"
+title: "GAM Part 4"
 author: "Murray Logan"
 date: "`r format(Sys.time(), '%d %B, %Y')`"
 output:
@@ -39,6 +39,8 @@ mathfont: LiberationMono
 monofont: DejaVu Sans Mono
 classoption: a4paper
 bibliography: ../resources/references.bib
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r setup, include=FALSE}
@@ -69,6 +71,7 @@ library(rnaturalearthdata)
 library(raster)
 library(ggspatial)
 library(patchwork)
+theme_set(theme_classic())
 ```
  
 # Scenario
@@ -78,32 +81,72 @@ relative abundance of a number of plant functional types (PFT's) including shrub
 C3 grasses and C4 grasses. They used data from 73 sites across temperate central North America (see pareulo.csv) 
 and calculated the relative abundance of C3 grasses at each site as a response variable
 
-![grass](../resources/grass.jpg){width="251" height="290"}
+![grass](../resources/grass.jpg){width=251 height=290}
 
 Format of paruelo.csv data file
 
-C3    LAT       LONG       MAP           MAT    JJAMAP    DJFMAP
+c3    lat       long       map           mat    jjamap    djfmap
 ----- --------- ---------- ------------- ------ --------- ---------
 \...  \...      \...       \...          \...   \...      \...
 
 --------------     ---------------------------------------------------------------------
-**C3**             - Relative abundance of C3 grasses at each site - response variable
-**LAT**            - Latitudinal coordinate
-**LONG**           - Longitudinal coordinate
-**MAP**            - Mean annual precipitation
-**MAT**            - Mean annual temperature
-**JJAMAP**         - Mean annual precipitation in June, July, August
-**DJFMAP**         - Mean annual precipitation in December, January, February
+**c3**             - Relative abundance of c3 grasses at each site - response variable
+**lat**            - Latitudinal coordinate
+**long**           - Longitudinal coordinate
+**map**            - Mean annual precipitation
+**mat**            - Mean annual temperature
+**jjamap**         - Mean annual precipitation in June, July, August
+**djfmap**         - Mean annual precipitation in December, January, February
 --------------     ---------------------------------------------------------------------
 
 # Read in the data
 
 ```{r readData, results='markdown', eval=TRUE}
-paruelo = read_csv('../data/paruelo.csv', trim_ws=TRUE)
+paruelo <- read_csv('../data/paruelo.csv', trim_ws=TRUE) %>%
+  janitor::clean_names()
 glimpse(paruelo)
+
+canada <- ne_countries(country = c("united states of america", "canada"), scale = "medium", returnclass = "sf") %>%
+  st_crop(xmin = -130, xmax = -60, 
+          ymin = 0, ymax = 80)
+glimpse(canada)
+
+spain <- ne_countries(country = c("spain", "italy"), scale = "medium", returnclass = "sf")
 ```
  
 # Exploratory data analysis
+```{r}
+ggplot() +
+  geom_sf(data = canada)
+```
+The map is with a spatial features mapping, so it knows what the shape and coordinate reference system is from the sf object.
+
+```{r}
+paruelo %>% head()
+```
+Note that the C3 data is % cover. To do percent cover, we need to ensure we do not have 0 or 100% cover ever. We also need to ensure that, when projecting onto a map, we have the same coordinate system.
+
+```{r}
+paruelo <- paruelo %>%
+  mutate(c3nz = ifelse(c3 == 0, 0.01, c3),
+         long = -long)
+paruelo_sf <- paruelo %>%
+  st_as_sf(coords = c("long", "lat"), crs = st_crs(canada))
+```
+
+```{r}
+ggplot() +
+  geom_sf(data = canada, aes(fill = adm0_a3_is), color = "white") +
+  scale_fill_manual(values = c("red", "light blue"), guide = "none") +
+  geom_sf(data = paruelo_sf, aes(col = c3, size = c3), alpha = 0.9) +
+  scale_color_viridis_c() +
+  coord_sf(expand = FALSE)
+```
+
+```{r}
+ggplot(paruelo) + 
+  geom_histogram(aes(x = c3))
+```
 
 We will focus on the spatial components.
 
@@ -118,285 +161,215 @@ where $\beta_0$ is the y-intercept. $f(Lat)$ and $f(Long)$ indicate the additive
 
 # Fit the model {.tabset .tabset-faded}
 
+## `s` smooth using lat and long (must be in same scale)
+```{r}
+paruelo_gam1 <- gam(c3nz ~ s(long, lat), data = paruelo,
+                    family = betar, method = "REML")
+```
+Note that we can combine the two smoother terms together because the two are on the same scale. This is only possible because the projection is to a flat, Mercator projection surface.
+
+```{r}
+k.check(paruelo_gam1)
+```
+
+Looks like it is ok for not being overconstrained. 
+
+```{r, eval = F}
+simulateResiduals(paruelo_gam1, plot = T)
+```
+
+We are unable to get the residuals because of the model family, but DHARMa has its own function for creating DHARMa-related functions from the model we select!
+
+```{r}
+sim_paruelo_resids <- createDHARMa(
+  simulatedResponse = simulate(paruelo_gam1, nsim = 250),
+  observedResponse = paruelo$c3nz,
+  fittedPredictedResponse = predict(paruelo_gam1))
+
+plot(sim_paruelo_resids)
+```
+
+Looks great!
+
+## `te` tensor products for two with different scales
+
+Another way of modelling is using tensor product smooths: `bs = "te"`. These are especially useful when the two terms are on **different scales**.
+
+```{r}
+paruelo_gam2 <- gam(c3nz ~ te(long, lat), data = paruelo,
+                    family = betar, method = "REML")
+createDHARMa(
+  simulatedResponse = simulate(paruelo_gam2, nsim = 250),
+  observedResponse = paruelo$c3nz,
+  fittedPredictedResponse = predict(paruelo_gam2)) %>% plot
+k.check(paruelo_gam2)
+```
+All looks good! Note that edf is way down now!
+
+
+However, the output of both of these models is a 2D smoother. If we want to split them both up, we use a tensor product interaction: `bs = "ti"`, to see the differences for each component.
+
+## `ti` for tensor interactions
+
+```{r}
+paruelo_gam3 <- gam(c3nz ~ ti(long) + ti(lat) + ti(long, lat), data = paruelo,
+                    family = betar, method = "REML")
+createDHARMa(
+  simulatedResponse = simulate(paruelo_gam3, nsim = 250),
+  observedResponse = paruelo$c3nz,
+  fittedPredictedResponse = predict(paruelo_gam3)) %>% plot
+k.check(paruelo_gam3)
+```
+All looks good!
+
 
 # Partial plots {.tabset .tabset-faded}
 
-## s(LONG,LAT) {.tabset .tabset-pills}
+## Using `gratia::draw()`
+```{r}
+draw(paruelo_gam1) # thin plate spline
+draw(paruelo_gam2) # tensor product
+draw(paruelo_gam3) # tensor product interaction
+```
+In the third plot, it shows the effect of long when using the average lat, the effect of lat when using the average long, and the effect of the two combined together!
 
-### plot
-```{r partialPlots1a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5}
-plot(paruelo.gam1,scheme = 2)
+## Using `mgcv::vis.gam()`
+```{r}
+par(mfrow = c(2,3))
+vis.gam(paruelo_gam1, theta=30)
+vis.gam(paruelo_gam2, theta=30)
+vis.gam(paruelo_gam3, theta=30)
+vis.gam(paruelo_gam1, theta=-30)
+vis.gam(paruelo_gam2, theta=-30)
+vis.gam(paruelo_gam3, theta=-30)
+par(mfrow = c(1,1))
 ```
 
-### vis.gam
-```{r partialPlots1b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5}
-vis.gam(paruelo.gam1, theta=30)
-```
-
-### draw
-
-```{r partialPlots1c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5}
-draw(paruelo.gam1)
-```
-
-
-## te(LONG,LAT) {.tabset .tabset-pills}
-
-### plot
-```{r partialPlots2a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5}
-plot(paruelo.gam2,scheme = 2)
-```
-
-### vis.gam
-```{r partialPlots2b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5}
-vis.gam(paruelo.gam2, theta=30)
-```
-
-### draw
-
-```{r partialPlots2c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5}
-draw(paruelo.gam2)
-```
-
-## ti(LONG,LAT) {.tabset .tabset-pills}
-
-### plot
-```{r partialPlots3a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=4, fig.height=4}
-plot(paruelo.gam3,scheme = 2)
-```
-
-### vis.gam
-```{r partialPlots3b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5}
-vis.gam(paruelo.gam3, theta=30)
-```
-
-### draw
-
-```{r partialPlots3c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=8}
-draw(paruelo.gam3)
-```
 
 # Model investigation / hypothesis testing {.tabset .tabset-faded}
 
-## s(LONG,LAT) {.tabset .tabset-pills}
-
-```{r summary1a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5}
-summary(paruelo.gam1)
+```{r}
+summary(paruelo_gam1)
 ```
+
+Says that there is a certain degree of wiggliness
 
 **Conclusions:**
 
 - in the very center of the sampling domain (average longitude and latitude),
-  the expected percentage cover of C3 grasses is
-  `r round(summary(paruelo.gam1)$p.table[1, 1], 2)` (link scale).  If we
+  the expected percentage cover of C3 grasses is the intercept = `r round(summary(paruelo_gam1)$p.table[1, 1], 2)` (link scale).  If we
   back-transform to the response scale, this is 
-  `r round(100*plogis(summary(paruelo.gam1)$p.table[1, 1]), 2)`%
-- there is evidence that the abundance of C3 grases varies non-linearly over the
+  `r round(100*plogis(summary(paruelo_gam1)$p.table[1, 1]), 2)`%
+- there is evidence that the abundance of c3 grasses varies non-linearly over the
   spatial extent of the sampling domain.
 - the model explains 
-  `r round(100*summary(paruelo.gam1)$dev.expl, 2)`% of the total deviance.
+  `r round(100*summary(paruelo_gam1)$dev.expl, 2)`% of the total deviance.
   
-```{r summary1b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5}
-tidy(paruelo.gam1)
+```{r}
+tidy(paruelo_gam1)
 ```
 
-## te(LONG,LAT) {.tabset .tabset-pills}
+## te(long,lat) {.tabset .tabset-pills}
 
 ```{r summary2a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5}
-summary(paruelo.gam2)
+summary(paruelo_gam2)
 ```
 
 **Conclusions:**
 
 - in the very center of the sampling domain (average longitude and latitude),
-  the expected percentage cover of C3 grasses is
-  `r round(summary(paruelo.gam2)$p.table[1, 1], 2)` (link scale).  If we
+  the expected percentage cover of c3 grasses is
+  `r round(summary(paruelo_gam2)$p.table[1, 1], 2)` (link scale).  If we
   back-transform to the response scale, this is 
-  `r round(100*plogis(summary(paruelo.gam2)$p.table[1, 1]), 2)`%
-- there is evidence that the abundance of C3 grases varies non-linearly over the
+  `r round(100*plogis(summary(paruelo_gam2)$p.table[1, 1]), 2)`%
+- there is evidence that the abundance of c3 grases varies non-linearly over the
   spatial extent of the sampling domain.
 - the model explains 
-  `r round(100*summary(paruelo.gam2)$dev.expl, 2)`% of the total deviance.
+  `r round(100*summary(paruelo_gam2)$dev.expl, 2)`% of the total deviance.
 
 ```{r summary2b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5}
-tidy(paruelo.gam2)
+tidy(paruelo_gam2)
 ```
 
-## ti(LONG,LAT) {.tabset .tabset-pills}
+## ti(long,lat) {.tabset .tabset-pills}
 
 ```{r summary3a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5}
-summary(paruelo.gam3)
+summary(paruelo_gam3)
 ```
+
+Clear evidence of an interaction between long and lat affecting the values.
 
 **Conclusions:**
 
 - in the very center of the sampling domain (average longitude and latitude),
-  the expected percentage cover of C3 grasses is
-  `r round(summary(paruelo.gam3)$p.table[1, 1], 2)` (link scale).  If we
+  the expected percentage cover of c3 grasses is
+  `r round(summary(paruelo_gam3)$p.table[1, 1], 2)` (link scale).  If we
   back-transform to the response scale, this is 
-  `r round(100*plogis(summary(paruelo.gam3)$p.table[1, 1]), 2)`%
-- at the average latitude, there is no evidence of a longitudinal shift in C3
+  `r round(100*plogis(summary(paruelo_gam3)$p.table[1, 1]), 2)`%
+- at the average latitude, there is no evidence of a longitudinal shift in c3
   percentage cover.
-- at the average longitude, there is evidence that C3 percentage cover varies
+- at the average longitude, there is evidence that c3 percentage cover varies
   non-linearly from north to south.  
-- there is evidence that the abundance of C3 grases varies non-linearly over the
+- there is evidence that the abundance of c3 grases varies non-linearly over the
   spatial extent of the sampling domain.
 - the model explains 
-  `r round(100*summary(paruelo.gam3)$dev.expl, 2)`% of the total deviance.
+  `r round(100*summary(paruelo_gam3)$dev.expl, 2)`% of the total deviance.
 
-```{r summary3b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5}
-tidy(paruelo.gam3)
+```{r}
+tidy(paruelo_gam3)
 ```
 
 
 # Summary figures {.tabset .tabset-faded}
 
-## s(LONG,LAT) {.tabset .tabset-pills}
+```{r}
+paruelo_list <- with(paruelo,
+                    list(lat = modelr::seq_range(lat, n=100),
+                         long = modelr::seq_range(long, n=100)))
+newdata <- 
+  emmeans(paruelo_gam3, ~long+lat, at = paruelo_list, type='response') %>%
+  as.data.frame %>% 
+  rename(c3 = response, lwr = lower.CL, upr = upper.CL)
 
-```{r summaryFig1a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5}
-paruelo.list = with(paruelo,
-                    list(LAT=seq(min(LAT), max(LAT), len=100),
-                         LONG=seq(min(LONG), max(LONG), len=100)))
-newdata = emmeans(paruelo.gam1, ~LONG+LAT, at=paruelo.list, type='response') %>%
-  as.data.frame
 newdata %>% head
-ggplot(newdata, aes(y=LAT, x=LONG)) +
-  geom_tile(aes(fill=response)) +
-  geom_contour(aes(z=response)) +
-  scale_fill_gradientn(colors=heat.colors(10)) +
-  geom_point(data=paruelo,aes(fill=C3), shape=21, size=5) +
-  coord_equal()
-```
 
-```{r summaryFig1b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=5}
-newdata.sf <- rasterFromXYZ(newdata[, c("LONG", "LAT", "response")]) %>% 
+newdata %>%
+  ggplot(aes(y = lat, x = long)) +
+  geom_tile(aes(fill = c3)) +
+  geom_contour(aes(z = c3)) +
+  scale_fill_gradientn(colors = heat.colors(10)) +
+  geom_point(data = paruelo, aes(fill = c3), shape = 21, size = 5) +
+  coord_equal()
+
+newdata_sf <- 
+  newdata %>%
+  dplyr::select(long, lat, c3) %>%
+  rasterFromXYZ() %>% 
+  mask(canada) %>%
   st_as_stars() %>%
-  st_set_crs(st_crs(usa))
+  st_set_crs(st_crs(canada))
 ## OR
 #newdata.sf <- newdata %>% 
-#  st_as_sf(coords=c("LONG", "LAT"),  crs=st_crs(usa)) %>%
+#  st_as_sf(coords=c("long", "lat"),  crs=st_crs(canada)) %>%
 #  st_rasterize()
 ggplot() +
-  geom_sf(data=usa) +
-  geom_stars(data=newdata.sf)
-```
+  geom_sf(data=canada) +
+  geom_stars(data=newdata_sf) +
+  scale_color_viridis_c() +
+  coord_sf(expand = FALSE) +
+  geom_sf(data = paruelo_sf, aes(col = c3, size = c3), alpha = 0.9)
 
-```{r summaryFig1c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=5}
-newdata.sf <- rasterFromXYZ(newdata[, c("LONG", "LAT", "response")]) %>%
-  mask(usa) %>%
-  st_as_stars() %>% 
-  st_set_crs(st_crs(usa))
 
 ggplot() +
-  geom_sf(data=usa) +
-  geom_stars(data=newdata.sf) +
-  scale_fill_gradientn(colours=heat.colors(10), na.value=NA) + 
-  geom_sf(data=paruelo.sf, aes(fill=C3), shape=21,  size=4) +
+  geom_sf(data = canada) +
+  geom_stars(data = newdata_sf) +
+  scale_fill_viridis_c() + 
+  geom_sf(data=paruelo_sf, aes(fill = c3), shape = 21,  size = 4) +
   annotation_scale(location = "bl", width_hint = 0.25) +
   annotation_north_arrow(location = "bl", which_north = "true", 
         pad_x = unit(0.25, "in"), pad_y = unit(0.2, "in"),
         style = north_arrow_fancy_orienteering) +
-  coord_sf(expand=FALSE) +
-  theme_bw()
-
-```
-
-## te(LONG,LAT) {.tabset .tabset-pills}
-
-```{r summaryFig2a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5}
-paruelo.list = with(paruelo,
-                    list(LAT=seq(min(LAT), max(LAT), len=100),
-                         LONG=seq(min(LONG), max(LONG), len=100)))
-newdata = emmeans(paruelo.gam2, ~LONG+LAT, at=paruelo.list, type='response') %>%
-  as.data.frame
-newdata %>% head
-ggplot(newdata, aes(y=LAT, x=LONG)) +
-  geom_tile(aes(fill=response)) +
-  geom_contour(aes(z=response)) +
-  scale_fill_gradientn(colors=heat.colors(10)) +
-  geom_point(data=paruelo,aes(fill=C3), shape=21, size=5) +
-  coord_equal()
-```
-
-```{r summaryFig2b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=5}
-newdata.sf <- rasterFromXYZ(newdata[, c("LONG", "LAT", "response")]) %>% 
-  st_as_stars() %>%
-  st_set_crs(st_crs(usa))
-## OR
-#newdata.sf <- newdata %>% 
-#  st_as_sf(coords=c("LONG", "LAT"),  crs=st_crs(usa)) %>%
-#  st_rasterize()
-ggplot() +
-  geom_sf(data=usa) +
-  geom_stars(data=newdata.sf)
-```
-
-```{r summaryFig2c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=5}
-newdata.sf <- rasterFromXYZ(newdata[, c("LONG", "LAT", "response")]) %>%
-  mask(usa) %>%
-  st_as_stars() %>% 
-  st_set_crs(st_crs(usa))
-
-ggplot() +
-  geom_sf(data=usa) +
-  geom_stars(data=newdata.sf) +
-  scale_fill_gradientn(colours=heat.colors(10), na.value=NA) + 
-  geom_sf(data=paruelo.sf, aes(fill=C3), shape=21,  size=4) +
-  annotation_scale(location = "bl", width_hint = 0.25) +
-  annotation_north_arrow(location = "bl", which_north = "true", 
-        pad_x = unit(0.25, "in"), pad_y = unit(0.2, "in"),
-        style = north_arrow_fancy_orienteering) +
-  coord_sf(expand=FALSE) +
-  theme_bw()
-
-```
-
-## ti(LONG,LAT) {.tabset .tabset-pills}
-```{r summaryFig3a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5}
-paruelo.list = with(paruelo,
-                    list(LAT=seq(min(LAT), max(LAT), len=100),
-                         LONG=seq(min(LONG), max(LONG), len=100)))
-newdata = emmeans(paruelo.gam3, ~LONG+LAT, at=paruelo.list, type='response') %>%
-  as.data.frame
-newdata %>% head
-ggplot(newdata, aes(y=LAT, x=LONG)) +
-  geom_tile(aes(fill=response)) +
-  geom_contour(aes(z=response)) +
-  scale_fill_gradientn(colors=heat.colors(10)) +
-  geom_point(data=paruelo,aes(fill=C3), shape=21, size=5) +
-  coord_equal()
-```
-
-```{r summaryFig3b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=5}
-newdata.sf <- rasterFromXYZ(newdata[, c("LONG", "LAT", "response")]) %>% 
-  st_as_stars() %>%
-  st_set_crs(st_crs(usa))
-## OR
-#newdata.sf <- newdata %>% 
-#  st_as_sf(coords=c("LONG", "LAT"),  crs=st_crs(usa)) %>%
-#  st_rasterize()
-ggplot() +
-  geom_sf(data=usa) +
-  geom_stars(data=newdata.sf)
-```
-
-```{r summaryFig3c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=5}
-newdata.sf <- rasterFromXYZ(newdata[, c("LONG", "LAT", "response")]) %>%
-  mask(usa) %>%
-  st_as_stars() %>% 
-  st_set_crs(st_crs(usa))
-
-ggplot() +
-  geom_sf(data=usa) +
-  geom_stars(data=newdata.sf) +
-  scale_fill_gradientn(colours=heat.colors(10), na.value=NA) + 
-  geom_sf(data=paruelo.sf, aes(fill=C3), shape=21,  size=4) +
-  annotation_scale(location = "bl", width_hint = 0.25) +
-  annotation_north_arrow(location = "bl", which_north = "true", 
-        pad_x = unit(0.25, "in"), pad_y = unit(0.2, "in"),
-        style = north_arrow_fancy_orienteering) +
-  coord_sf(expand=FALSE) +
-  theme_bw() +
+  coord_sf(expand=FALSE, ylim = c(20, 60)) +
   theme(axis.title=element_blank(),
         legend.position=c(0.99, 0),  legend.justification=c(1, 0))
 

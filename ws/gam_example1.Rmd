@@ -1,5 +1,5 @@
 ---
-title: "GAM Part1"
+title: "GAM Part 1"
 author: "Murray Logan"
 date: "`r format(Sys.time(), '%d %B, %Y')`"
 output:
@@ -39,6 +39,8 @@ mathfont: LiberationMono
 monofont: DejaVu Sans Mono
 classoption: a4paper
 bibliography: ../resources/references.bib
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r setup, include=FALSE}
@@ -59,16 +61,17 @@ library(see)         #for plotting residuals
 library(emmeans)   #for marginal means etc
 library(MuMIn)     #for model selection and AICc
 library(tidyverse) #for data wrangling
+theme_set(theme_classic())
 ```
 
 # Scenario
 
-This is an entirely fabricated example (how embarrising).
+This is an entirely fabricated example (how embarrassing).
 So here is a picture of some Red Grouse Chicks to compensate..
 
 ![Red grouse chicks](../resources/redgrousechicks.jpg){width="251" height="290"}
 
-Format of data.gp.csv data file
+Format of data_gam.csv data file
 
 x  y
 -- --
@@ -86,12 +89,41 @@ x  y
 # Read in the data
 
 ```{r readData, results='markdown', eval=TRUE}
-data_gam = read_csv('../data/data_gam.csv', trim_ws=TRUE)
+data_gam <- read_csv('../data/data_gam.csv', trim_ws=TRUE)
 glimpse(data_gam)
 ```
 
 
 # Exploratory data analysis
+
+```{r}
+p <- data_gam %>%
+  ggplot(aes(x, y)) +
+  geom_point()
+p +
+  geom_line(aes(col=y)) +
+  geom_smooth(se=F, col="red") +
+  geom_smooth(method = "lm", se=F, col="green") +
+  geom_smooth(method = "lm", formula="y ~ poly(x, 2)", se=F, col="yellow")
+
+(g1 <- p + geom_smooth(method = "gam", formula = y~s(x, k=3), se=T, col="black"))
+```
+
+GAM by far looks the best. We can inspect the basis functions specifically using the following:
+
+```{r}
+(g2 <- basis(s(x, k=3), data=data_gam) %>% draw)
+require(patchwork)
+g1 / g2
+```
+
+To see other basis functions and their respective basis function definitions:
+
+```{r}
+basis(s(x, k=3, bs = "cr"), data=data_gam) %>% draw
+smoothCon(s(x, k=3, bs = "cr"), data=data_gam)[[1]]$X # view the basis function equation itself
+```
+
 
 Model formula:
 $$
@@ -105,51 +137,145 @@ where $\beta_0$ is the y-intercept, and $f(x)$ indicates an additive smoothing f
 
 # Fit the model
 
+```{r}
+gam_mod <- gam(y ~ s(x, k=3), data = data_gam, method = "REML")
+```
+
 
 # Model validation {.tabset .tabset-faded}
+```{r}
+par(mfrow = c(2,2))
+gam.check(gam_mod, pch=19)
+par(mfrow = c(1,1))
 
+k.check(gam_mod) # gives the summary values without the plots
+```
+
+k' is the df of the basis functions (we asked for 3, so k-1 df)
+edf is the estimated df of the knots, so if it is similar to k', non-significant, otherwise, it might be much less than k' if you've made too complex a model.
+
+k-index is how consistent the residuals are distributed across the curve. Is essentially the ratio of individual residuals vs. the average of the absolute residuals. With higher k-indexes, suggests a bad fit.
+
+p-value indicates if there is any evidence of over-constraining the model. If the model requires more complex fits, this value will be less than 0.05.
+
+Check the model's fit:
+
+=> Evidence of overconstraining basis functions:
+
+* Is the k-index low?
+* Is the associated p-value less than 0.05?
+* Are k' and edf similar?
+
+=> Evidence of overly-complicated models:
+
+* Is the data well distributed across the spectrum?
+* Is the edf close to 1?
+* Is the p-value non-significant?
+* Does the plotted relationship seem odd?
+
+Using `gratia` (for same plots, but using ggplot2)
+```{r}
+appraise(gam_mod)
+```
+
+```{r, eval=F}
+resids <- simulateResiduals(gam_mod, plot = T)
+```
+
+Instead of colinearity, we have another assumption for GAMs, specifically:
+
+How well does a specific basis or smoother term approximate another smoother?
+
+This is called the **'concurvity'** assumption. We use the `concurvity()` function (from `mgcv`) for this assessment.
+
+
+Concurvity ranges from 0 to 1 and assesses whether the basis functions have similar weights. If they do have similar weights, they will have a high concurvity (close to 1).
+
+
+```{r}
+concurvity(gam_mod)
+```
+
+This produces three outputs:
+
+* 'worst' is the worst-case scenario, can usually ignore this.
+* 'observed' is too optimistic, will be too high, so ignore this one as well.
+* 'estimate' is the **most useful** and likely to be the most accurate. 
+
+It is very difficult to understand how the 'observed', and even more-so the 'estimate' is calculated, but know that it is a good compromise for concurvity between the worst and the best.
+
+Next, we plot the partial plots.
 
 # Partial plots
 
+```{r}
+gam_mod %>% draw(residuals = T)
+```
+Note below this plot is a rug plot.
+
 
 # Model investigation / hypothesis testing {.tabset .tabset-faded}
+
+GAMs are more descriptive rather than causal models.
+
+They can also be used to create non-linear offsets or covariates to soak up noisy variation in regular models.
+
+Thus, GAMs are more about taking away the variation to better explain natural processes, rather than being actual causal mechanisms or for answering important hypotheses themselves.
+
+```{r}
+summary(gam_mod)
+```
+When using GAMS, the partial plots always have the y-axis centred around zero. We will need to change this later. The reason is if we have multiple predictors, it becomes increasingly important to standardize to the average relationships across other covariates. We will have to tell it which value of the other variable(s) to assume in order to get back the y-axis later.
+
+Summary outputs:
+
+* edf: estimated degrees of freedom. If close to 1, this would be a straight line.
+* Ref.df: ignore, used for a previous analysis that has since been removed
+* F-test: tests the hypothesis that the trend is NOT a straight line. If it is not, this will be significant. Another way of putting it; is the line significantly 'wiggly'?
+* R-sq: a pseudo-^2, but **better to go with deviance explained**
+
 
 
 # Further analyses {.tabset .tabset-faded}
 
 
-# Summary figures
-
-
-```{r SummaryFig, results='markdown', eval=TRUE, hidden=TRUE}
-data_gam.list=with(data_gam, list(x=seq(min(x), max(x), len=100)))
-
-newdata = emmeans(data_gam.gam, ~x, at=data_gam.list) %>%
-    as.data.frame
-head(newdata)
-
-ggplot(newdata, aes(y=emmean, x=x)) +
-    geom_ribbon(aes(ymin=lower.CL, ymax=upper.CL), fill='blue', alpha=0.3) +
-    geom_line() +
-    geom_point(data=data_gam, aes(y=y,x=x))+
-    theme_bw()
-
-## Partials
-#resid.list = list(x=data_gam$x)
-newdata.partial = data_gam %>%
-  mutate(Pred = predict(data_gam.gam,  type='link'),
-         Res = resid(data_gam.gam),
-         Resid = Pred + Res)
-#newdata.partial = emmeans(data_gam.gam, ~x, at=resid.list) %>%
-#    as.data.frame %>%
-#    mutate(Resid = emmean + resid(data_gam.gam))
-
-ggplot(newdata, aes(y=emmean, x=x)) +
-    geom_ribbon(aes(ymin=lower.CL, ymax=upper.CL), fill='blue', alpha=0.3) +
-    geom_line() +
-    geom_point(data=newdata.partial, aes(y=Resid,x=x))+
-    theme_bw()
-
-
+```{r}
+d <- derivatives(gam_mod, order=1) # get first-order derivatives across the plot
+d
+draw(d)
 ```
+
+To get the values of x where the data have the lowest absolute value (which for a first derivative = an inflection point), as well as the same thing but for the 95% lower and upper curves' derivatives:
+```{r}
+(d_ci <- d %>%
+  summarise(val = data[which.min(abs(derivative))],
+            lwr = data[which.min(abs(lower))],
+            upr = data[which.min(abs(upper))]))
+
+g1 + 
+  geom_vline(data=d_ci, aes(xintercept = val), col="red") +
+  geom_vline(data=d_ci, aes(xintercept = lwr), col="red", linetype = "dashed") +
+  geom_vline(data=d_ci, aes(xintercept = upr), col="red", linetype = "dashed")
+```
+
+Peak is around 8.5, 95% CI is between 7.9 and 9.5.
+
+Could also draw two lines, one that is a `geom_segment()`, which ends and then restarts the 95% CI limits, and another that is underneath, going the whole way around (`geom_line()`)
+
+# Summary figures
+```{r}
+gam_mod_list <- with(data_gam, list(x = modelr::seq_range(x, n=100)))
+newdata <- emmeans(gam_mod, ~x, at = gam_mod_list) %>%
+  as.data.frame %>%
+  mutate(y = emmean, lwr = lower.CL, upr = upper.CL)
+ggplot(newdata, aes(y = y, x = x)) +
+  geom_ribbon(aes(ymin = lwr, ymax = upr), fill = "blue", alpha = 0.3) +
+  geom_line() +
+  geom_point(data = data_gam) +
+  geom_vline(data=d_ci, aes(xintercept = val), col="red") +
+  geom_vline(data=d_ci, aes(xintercept = lwr), col="red", linetype = "dashed") +
+  geom_vline(data=d_ci, aes(xintercept = upr), col="red", linetype = "dashed")
+```
+
+
 # References

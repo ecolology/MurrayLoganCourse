@@ -1,5 +1,5 @@
 ---
-title: "GAM Part2"
+title: "GAM Part 2"
 author: "Murray Logan"
 date: "`r format(Sys.time(), '%d %B, %Y')`"
 output:
@@ -39,6 +39,8 @@ mathfont: LiberationMono
 monofont: DejaVu Sans Mono
 classoption: a4paper
 bibliography: ../resources/references.bib
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r setup, include=FALSE}
@@ -59,6 +61,7 @@ library(tidyverse) #for data wrangling
 library(DHARMa)    #for simulated residuals
 library(performance) #for residual disagnostics
 library(see)        # to visualize residual diagnostics
+theme_set(theme_classic())
 ```
  
 # Scenario
@@ -71,7 +74,7 @@ explore the temporal patterns in the Kauai Moorhen.
 
 Format of reed.csv data file
 
-Year Stilt.Oahu Stilt.Maui Coot.Oahu Coot.Maui Moorhen.Kauai Rainfall
+year stilt_oahu stilt_maui coot_oahu coot_maui moorhen rainfall
 ---- ---------- ---------- --------- --------- ------------- --------
 1956 163        169        528       177       2             15.16
 1957 272        190        338       273       NA            15.48
@@ -81,99 +84,220 @@ Year Stilt.Oahu Stilt.Maui Coot.Oahu Coot.Maui Moorhen.Kauai Rainfall
 1961 134        155        717       149       10           19.93
 
 --------------    ---------------------------------------------------
-**Year**          - a continuous predictor
-**Stilt.Oahu**    - the abundance of the Oahu stilt
-**Stilt.Maui**    - the abundance of the Maui stilt 
-**Coot.Oahu**     - the abundance of the Oahu coot 
-**Coot.Maui**     - the abundance of the Maui coot
-**Moorhen.Kauai** - the abundance of the Kauai moorhen
-**Rainfal**       - the number of centimeters (or inches) of rain
+**year**          - a continuous predictor
+**stilt_oahu**    - the abundance of the Oahu stilt
+**stilt_maui**    - the abundance of the Maui stilt 
+**coot_oahu**     - the abundance of the Oahu coot 
+**coot_maui**     - the abundance of the Maui coot
+**moorhen**       - the abundance of the Kauai moorhen
+**rainfall**      - the number of centimeters (or inches) of rain
 --------------    ---------------------------------------------------
 
 # Read in the data
 
 ```{r readData, results='markdown', eval=TRUE}
-reed = read_csv('../data/reed.csv', trim_ws=TRUE)
+reed_full <- read_csv('../data/reed.csv', trim_ws=TRUE) %>% 
+  janitor::clean_names() %>%
+  rename(moorhen = moorhen_kauai)
+reed <- filter(reed_full, complete.cases(moorhen))
 glimpse(reed)
 ```
 
 # Exploratory data analysis
+```{r}
+ggplot(reed, aes(moorhen, x = year)) +
+  geom_point() +
+  geom_smooth(method = 'gam', formula = y ~ s(x, bs = "cr"), 
+              method.args = list(family = 'poisson'))
+```
+
+We can clearly see that it is a non-linear trend that is increasing through time, which would be difficult to model using any polynomials or worse, linear terms alone. Also note that the values are all 0+ integers, so a poisson or negative binomial family of distirbution would work well for these data!
+
+```{r}
+ggplot(reed, aes(moorhen, x = rainfall)) +
+  geom_point() +
+  geom_smooth(method = 'gam', formula = y ~ s(x, bs = "cr"), 
+              method.args = list(family = 'poisson'))
+```
+
 
 Model formula:
 $$
 y_i \sim{} \mathcal{Pois}(\lambda_i)\\
-log(\lambda_i) =\beta_0 + f(Year_i) + f(Rainfall_i)
+log(\lambda_i) =\beta_0 + f(year_i) + f(rainfall_i)
 $$
 
-where $\beta_0$ is the y-intercept. $f(Year)$ and $f(Rainfall)$ indicate the additive smoothing functions of Year and Rainfall respectively. 
+where $\beta_0$ is the y-intercept. $f(year)$ and $f(rainfall)$ indicate the additive smoothing functions of year and rainfall respectively. 
+
+# Fit the model and validate
+
+We don't need the thin-plate to be efficient because we don't have a ton of data (as in, thousands of data points), thus we can use cubic regression.
+```{r}
+reed_gam1 <- gam(moorhen ~ s(year, bs = "cr") + s(rainfall, bs = "cr"), 
+    data = reed, family = poisson(link = "log"), method = "REML", select = TRUE)
+k.check(reed_gam1)
+```
+The k-check is saying that the rainfall is ok (edf below max k, i.e. k'), but the # of knots for the year smoother is potentially not enough (**k-index less than 1!!**), so we can double it to make sure that it is the same.
+```{r}
+appraise(reed_gam1)
+```
+Clearly a big problem with the QQ plot, suggesting overdispersion! This will show up in the DHARMa residuals. Other plots look ok overall.
+
+```{r}
+s <- simulateResiduals(reed_gam1, plot=T)
+testDispersion(s) # very overdispersed
+```
+
+
+
+```{r}
+reed_gam2 <- gam(moorhen ~ s(year, bs = "cr", k = 9*2+1) + s(rainfall, bs = "cr"), 
+    data = reed, family = poisson(link = "log"), method = "REML", select = TRUE)
+k.check(reed_gam2)
+```
+k-index is not less than 1 now, so looks good. 
+
+DHARMa residuals still likely to look like shite:
+
+```{r}
+appraise(reed_gam2)
+s <- simulateResiduals(reed_gam2, plot=T)
+```
+Still looks bad...
+
+```{r}
+testZeroInflation(s) 
+```
+
+No evidence of zero-inflation.
+
+```{r}
+testDispersion(s)
+```
+Overdispersed, but technically not significantly so. Still, the QQ plot is terrible, so should probably address!!
+
 
 
 # Refit and validate models {.tabset .tabset}
 
-
-# Partial plots {.tabset .tabset-faded}
-
-## draw
-
-```{r partialPlot1a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=4}
-draw(reed.gam3)
+```{r}
+reed_gam3 <- gam(moorhen ~ s(year, bs = "cr", k = 9*2+1) + s(rainfall, bs = "cr"), 
+    data = reed, family = nb(link = "log"), method = "REML", select = TRUE)
+k.check(reed_gam3)
+```
+Problem with this fit is that DHARMa doesn't work with this fit! 
+```{r, eval=F}
+simulateResiduals(reed_gam3)
 ```
 
-## plot
+So to use it, we need to manually extract theta, the dispersion parameter.
 
-```{r partialPlot1b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=4}
-#plot(reed.gam3, pages=1)
-#plot(reed.gam3, pages=1, shift=coef(reed.gam3)[1])
-#plot(reed.gam3, pages=1, shift=coef(reed.gam3)[1], scale=0)
-plot(reed.gam3, pages=1, shift=coef(reed.gam3)[1], trans=exp,
-     resid=TRUE, cex=4, scale=0)
+```{r}
+(theta <- reed_gam3$family$getTheta(TRUE))
+```
+There is more than 4x the amount of expected dispersion! Next, we can re-fit the model with theta, allowing DHARMa to work with our model.
+
+```{r}
+reed_gam3 <- reed_gam3 %>% update(.~., family = negbin(link = "log", theta = theta))
+```
+
+```{r}
+k.check(reed_gam3)
+```
+K-index is low, but notice that k' and edf are distingly different, with a lower edf, thus we do NOT need to add knots! Remember, it is a combination of all three things that determines if we need to add knots or not.
+
+```{r}
+s <- simulateResiduals(reed_gam3, plot=T)
+testDispersion(s)
+appraise(reed_gam3)
+concurvity(reed_gam3)
+```
+All looks good! QQ plot looks a bit weird, but not too too bad.
+
+
+# Partial plots {.tabset .tabset-faded}
+```{r}
+draw(reed_gam3, resid = T)
+
+# # Using base R graphics:
+# plot(reed_gam3, 
+#      pages=1, shift=coef(reed_gam3)[1],
+#      trans=exp,
+#      resid=TRUE, cex=4, scale=0)
 ```
 
 
 
 # Model investigation / hypothesis testing {.tabset .tabset-faded}
 
-## summary
-
-```{r modelSummary1a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=4}
-summary(reed.gam3)
+```{r}
+summary(reed_gam3)
 ```
+
+Evidence of a wiggly effect of year, no such evidence for rainfall, thus we may consider shifting rainfall to a linear term alone.
+
+```{r}
+reed_gam4 <- gam(moorhen ~ s(year, bs = "cr", k = 9*2+1) + rainfall, 
+    data = reed, family = nb(link = "log"), method = "REML", select = TRUE)
+reed_gam4 <- reed_gam4 %>% update(.~., family = negbin(link = "log", theta = theta))
+summary(reed_gam4)
+```
+
+```{r}
+reed_gam5 <- gam(moorhen ~ s(year, bs = "cr", k = 9*2+1), 
+    data = reed, family = nb(link = "log"), method = "REML", select = TRUE)
+reed_gam5 <- reed_gam5 %>% update(.~., family = negbin(link = "log", theta = theta))
+```
+
+```{r}
+AICc(reed_gam3, reed_gam4, reed_gam5) %>% arrange(AICc)
+```
+So definitely no support for rainfall having much of any effect!
+
 
 **Conclusions:**
 
-- the average number of Moorhen is `r round(summary(reed.gam3)$p.table[1, 1],2)`
-  on the link scale or `r round(exp(summary(reed.gam3)$p.table[1, 1]),2)` on the
-  response scale. This number corresponds to the average number of Moorhens
-  expected for the average year with the average rainfall.
-- there is evidence of a signficantly wiggly change in Moorhen numbers over
-  time.
-- there is no evidence of a wiggly rainfall trend
-- we might consider dropping the smoother for rainfall in preference for a
-  regular linear parametric term.
+- The average number of Moorhen is `r round(summary(reed_gam3)$p.table[1, 1],2)`
+  on the link scale or `r round(exp(summary(reed_gam3)$p.table[1, 1]),2)` on the response scale. This number corresponds to the average number of Moorhens expected for the average year with the average rainfall.
+- There is evidence of a significantly wiggly change in Moorhen numbers over time (see s(year) term significance).
+- There is no evidence of a wiggly rainfall trend (see s(rainfall))
+- We might consider dropping the smoother for rainfall in preference for a regular linear parametric term, or even delete rainfall altogether, since the edf is already very close to zero.
 
-## tidy
- 
-```{r modelSummary1b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=4}
-tidy(reed.gam3)
+```{r}
+tidy(reed_gam3)
 ```
-
-**Conclusions:**
-
-- the average number of Moorhen is `r round(summary(reed.gam3)$p.table[1, 1],2)`
-  on the link scale or `r round(exp(summary(reed.gam3)$p.table[1, 1]),2)` on the
-  response scale. This number corresponds to the average number of Moorhens
-  expected for the average year with the average rainfall.
-- there is evidence of a signficantly wiggly change in Moorhen numbers over
-  time.
-- there is no evidence of a wiggly rainfall trend
-- we might consider dropping the smoother for rainfall in preference for a
-  regular linear parametric term.
-
-# Further modelling {.tabset .tabset-faded} 
-
 
 
 # Summary figures {.tabset .tabset-faded}
+```{r}
+newdata <- with(reed, list(year = modelr::seq_range(year, n=100),
+                                 rainfall = mean(rainfall, na.rm=T))) %>%
+  emmeans(reed_gam3, ~year, at = ., type = "response") %>%
+  as.data.frame %>%
+  mutate(moorhen = response, lwr = lower.CL, upr = upper.CL)
+
+p <- ggplot(newdata, aes(y = moorhen, x = year)) +
+  geom_ribbon(aes(ymin = lwr, ymax = upr), fill = "blue", alpha = 0.3) +
+  geom_line()
+p + geom_point(data = reed)
+
+```
+
+**These data are not strictly correct!**, as they are after standardizing for rainfall (another variable in our model). Thus, when we have multiple values, we need to get the marginal plots.
+
+We need to add back the residuals to the predicted to get the 'observed' values, after accounting for the effect of rainfall.
+
+```{r}
+reed_obs <- with(reed_gam3$model, 
+                 data.frame(year = year, rainfall = mean(rainfall))) %>%
+  mutate(pred = predict(reed_gam3, newdata = ., type = "link"),
+         resid = reed_gam3$residuals,
+         moorhen = exp(pred + resid))
+
+p + geom_point(data = reed_obs) +
+  geom_point(data = reed, col = "red")
+```
+Note the difference! Note that this is not the same as model shrinkage, even though the plot looks very similar to that in Statistical Rethinking.
 
 
 # References 
