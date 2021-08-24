@@ -274,7 +274,6 @@ plot_model(loyn.glm,  type='est', transform='exp', show.values=TRUE)
 
 ```{r}
 summary(loyn.glm)
-
 ```
 
 Evidence of an effect of log-area and of grazing area 5 being less than grazing 1, while all other grazing levels were not different from grazing 1. Need to investigate pair-wise effects among the factor levels thereafter.
@@ -319,7 +318,7 @@ Best model is indicated by '+' for fgraze being important, as well as log-area (
 
 dAICc = 2 is that the two models are basically the same. If more than two, are basically different. Thus, this model is the optimal model.
 
-# Option 2: Model averaging
+## Option 2: Model averaging
 
 Multiply all coefficients by weight, assuming that the models are reasonable (i.e. **deltaAIC = 10 or less**).
 

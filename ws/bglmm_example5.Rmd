@@ -1,5 +1,5 @@
 ---
-title: "GLMM example 5"
+title: "Bayesian GLMM Part 5"
 author: "Murray Logan"
 date: "`r format(Sys.time(), '%d %B, %Y')`"
 output:
@@ -39,6 +39,8 @@ mathfont: LiberationMono
 monofont: DejaVu Sans Mono
 classoption: a4paper
 bibliography: ../resources/references.bib
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r setup, include=FALSE, warnings=FALSE, message=FALSE}
@@ -61,6 +63,7 @@ library(MASS)      #for glm.nb
 library(MuMIn)     #for AICc
 library(tidyverse) #for data wrangling
 library(brms)
+theme_set(theme_classic())
 ```
 
 # Scenario
@@ -70,7 +73,9 @@ Someone did something for some reason.....
 # Read in the data
 
 ```{r readData, results='markdown', eval=TRUE}
-owls = read_csv('../data/owls.csv', trim_ws=TRUE)
+owls <- read_csv('../data/owls.csv', trim_ws=TRUE) %>%
+  janitor::clean_names() %>%
+  rename(food = food_treatment, sex = sex_parent)
 glimpse(owls)
 ```
 
@@ -96,108 +101,108 @@ $\bf{Z}$ represents a cell means model matrix for the random intercepts associat
 ## Foot treatment (deprived or satiated
 ## Sex of parent
 ## Arrival time of parent
-## Nest as random
+## nest as random
 ## Brood size offset
-owls = owls %>% mutate(Nest =factor(Nest),
-                       FoodTreatment = factor(FoodTreatment),
-                       SexParent = factor(SexParent),   
-                       NCalls = SiblingNegotiation)
+owls = owls %>% mutate(nest = factor(nest),
+                       food = factor(food),
+                       sex = factor(sex),   
+                       ncalls = SiblingNegotiation)
 ggplot(data = owls) +
-    geom_boxplot(aes(y = NCalls, x = Nest)) + 
-    facet_grid(SexParent ~ FoodTreatment)
+    geom_boxplot(aes(y = ncalls, x = nest)) + 
+    facet_grid(sex ~ food)
 
 ggplot(data=owls) +
-  geom_boxplot(aes(y=NCalls/BroodSize,  x=SexParent,  color=FoodTreatment)) +
-  facet_wrap(~Nest)
+  geom_boxplot(aes(y=ncalls/brood_size,  x=sex,  color=food)) +
+  facet_wrap(~nest)
 
-ggplot(data = owls,aes(y = NCalls/BroodSize, x = ArrivalTime, color=SexParent)) +
+ggplot(data = owls,aes(y = ncalls/brood_size, x = arrival_time, color=sex)) +
     geom_point() + 
     geom_smooth(method='lm') +
-  facet_grid(~FoodTreatment)
+  facet_grid(~food)
 
-ggplot(data = owls,aes(y = NCalls, x = ArrivalTime, color=FoodTreatment)) +
+ggplot(data = owls,aes(y = ncalls, x = arrival_time, color=food)) +
     geom_point() + 
     geom_smooth(method='lm') 
-#  facet_grid(~FoodTreatment)
+#  facet_grid(~food)
 
-ggplot(data = owls,aes(y = NegPerChick, x = ArrivalTime, color=FoodTreatment)) +
+ggplot(data = owls,aes(y = NegPerChick, x = arrival_time, color=food)) +
     geom_point() + 
   geom_smooth(method='lm') +
-  facet_wrap(~Nest,  scale='free_y')
+  facet_wrap(~nest,  scale='free_y')
 
 
 
-owls.rstanP <- stan_glmer(NCalls ~ FoodTreatment+SexParent +
-                           offset(log(BroodSize)) + (1|Nest),
+owls_rstanP <- stan_glmer(ncalls ~ food+sex +
+                           offset(log(brood_size)) + (1|nest),
                          dat=owls,  family=poisson(link='log'), refresh=0, 
                          iter=5000,  warmup=2000,  thin=10,  chains=3, cores=3)
 
 
-owls.rstanP <- stan_glmer(NCalls ~ FoodTreatment+scale(ArrivalTime) +
-                           offset(log(BroodSize)) + (1|Nest),
+owls_rstanP <- stan_glmer(ncalls ~ food+scale(arrival_time) +
+                           offset(log(brood_size)) + (1|nest),
                          dat=owls,  family=poisson(link='log'), refresh=0, 
                          iter=5000,  warmup=2000,  thin=10,  chains=3, cores=3)
 
-owls.rstanP %>% get_variables()
-plot(owls.rstanP,  'mcmc_trace', regex_pars='^.Intercept|Food|Arrival|[sS]igma')
-plot(owls.rstanP,  'mcmc_acf_bar', regex_pars='^.Intercept|Food|Arrival|[sS]igma')
-plot(owls.rstanP,  'mcmc_rhat_hist', regex_pars='^.Intercept|Food|Arrival|[sS]igma')
-plot(owls.rstanP,  'mcmc_neff_hist', regex_pars='^.Intercept|Food|Arrival|[sS]igma')
+owls_rstanP %>% get_variables()
+plot(owls_rstanP,  'mcmc_trace', regex_pars='^.Intercept|Food|Arrival|[sS]igma')
+plot(owls_rstanP,  'mcmc_acf_bar', regex_pars='^.Intercept|Food|Arrival|[sS]igma')
+plot(owls_rstanP,  'mcmc_rhat_hist', regex_pars='^.Intercept|Food|Arrival|[sS]igma')
+plot(owls_rstanP,  'mcmc_neff_hist', regex_pars='^.Intercept|Food|Arrival|[sS]igma')
 
 
-preds <- posterior_predict(owls.rstanP,  nsamples=250,  summary=FALSE)
-owls.resids <- createDHARMa(simulatedResponse = t(preds),
-                            observedResponse = owls$NCalls,
+preds <- posterior_predict(owls_rstanP,  nsamples=250,  summary=FALSE)
+owls_resids <- createDHARMa(simulatedResponse = t(preds),
+                            observedResponse = owls$ncalls,
                             fittedPredictedResponse = apply(preds, 2, median))
-plot(owls.resids)
+plot(owls_resids)
 
 
-owls.rstanNB <- stan_glmer(NCalls ~ FoodTreatment+SexParent +
-                           offset(log(BroodSize)) + (1|Nest),
+owls_rstanNB <- stan_glmer(ncalls ~ food+sex +
+                           offset(log(brood_size)) + (1|nest),
                          dat=owls,  family=neg_binomial_2(link='log'), refresh=0, 
                          iter=5000,  warmup=2000,  thin=10,  chains=3, cores=3)
 
-owls.rstanNB <- stan_glmer(NCalls ~ FoodTreatment+scale(ArrivalTime) +
-                           offset(log(BroodSize)) + (1|Nest),
+owls_rstanNB <- stan_glmer(ncalls ~ food+scale(arrival_time) +
+                           offset(log(brood_size)) + (1|nest),
                          dat=owls,  family=neg_binomial_2(link='log'), refresh=0, 
                          iter=5000,  warmup=2000,  thin=10,  chains=3, cores=3)
 
-owls.rstanNB %>% get_variables()
-plot(owls.rstanNB,  'mcmc_trace', regex_pars='^.Intercept|Food|Arrival|[sS]igma')
-plot(owls.rstanNB,  'mcmc_acf_bar', regex_pars='^.Intercept|Food|Arrival|[sS]igma')
-plot(owls.rstanNB,  'mcmc_rhat_hist', regex_pars='^.Intercept|Food|Arrival|[sS]igma')
-plot(owls.rstanNB,  'mcmc_neff_hist', regex_pars='^.Intercept|Food|Arrival|[sS]igma')
+owls_rstanNB %>% get_variables()
+plot(owls_rstanNB,  'mcmc_trace', regex_pars='^.Intercept|Food|Arrival|[sS]igma')
+plot(owls_rstanNB,  'mcmc_acf_bar', regex_pars='^.Intercept|Food|Arrival|[sS]igma')
+plot(owls_rstanNB,  'mcmc_rhat_hist', regex_pars='^.Intercept|Food|Arrival|[sS]igma')
+plot(owls_rstanNB,  'mcmc_neff_hist', regex_pars='^.Intercept|Food|Arrival|[sS]igma')
 
 
-preds <- posterior_predict(owls.rstanNB,  nsamples=250,  summary=FALSE)
-owls.resids <- createDHARMa(simulatedResponse = t(preds),
-                            observedResponse = owls$NCalls,
+preds <- posterior_predict(owls_rstanNB,  nsamples=250,  summary=FALSE)
+owls_resids <- createDHARMa(simulatedResponse = t(preds),
+                            observedResponse = owls$ncalls,
                             fittedPredictedResponse = apply(preds, 2, median))
-plot(owls.resids)
-testZeroInflation(owls.resids)
+plot(owls_resids)
+testZeroInflation(owls_resids)
 
-testTemporalAutocorrelation(owls.resids,  time=owls$ArrivalTime)
-owls.resids1 <- recalculateResiduals(owls.resids,  group=interaction(owls$ArrivalTime,  owls$Nest),  aggregateBy = mean)
-testTemporalAutocorrelation(owls.resids1,  time=unique(owls$ArrivalTime))
+testTemporalAutocorrelation(owls_resids,  time=owls$arrival_time)
+owls_resids1 <- recalculateResiduals(owls_resids,  group=interaction(owls$arrival_time,  owls$nest),  aggregateBy = mean)
+testTemporalAutocorrelation(owls_resids1,  time=unique(owls$arrival_time))
 
 ## Cant use zero inflation with glmer
 
-owls.rstan1 <- stan_glmer(NCalls ~ FoodTreatment+scale(ArrivalTime) +
-                           offset(log(BroodSize)) + (FoodTreatment*scale(ArrivalTime)|Nest),
+owls_rstan1 <- stan_glmer(ncalls ~ food+scale(arrival_time) +
+                           offset(log(brood_size)) + (food*scale(arrival_time)|nest),
                          dat=owls,  family=neg_binomial_2(link='log'), refresh=0, 
                          iter=5000,  warmup=2000,  thin=10,  chains=3, cores=3)
 
-owls.rstan1 %>% get_variables()
-plot(owls.rstan1,  'mcmc_trace', regex_pars='^.Intercept|^Food|^scale.Arrival|[sS]igma')
-plot(owls.rstan1,  'mcmc_acf_bar', regex_pars='^.Intercept|^Food|^scale.Arrival|[sS]igma')
-plot(owls.rstan1,  'mcmc_rhat_hist', regex_pars='^.Intercept|^Food|^scale.Arrival|[sS]igma')
-plot(owls.rstan1,  'mcmc_neff_hist', regex_pars='^.Intercept|^Food|^scale.Arrival|[sS]igma')
+owls_rstan1 %>% get_variables()
+plot(owls_rstan1,  'mcmc_trace', regex_pars='^.Intercept|^Food|^scale.Arrival|[sS]igma')
+plot(owls_rstan1,  'mcmc_acf_bar', regex_pars='^.Intercept|^Food|^scale.Arrival|[sS]igma')
+plot(owls_rstan1,  'mcmc_rhat_hist', regex_pars='^.Intercept|^Food|^scale.Arrival|[sS]igma')
+plot(owls_rstan1,  'mcmc_neff_hist', regex_pars='^.Intercept|^Food|^scale.Arrival|[sS]igma')
 
-preds <- posterior_predict(owls.rstan1,  nsamples=250,  summary=FALSE)
-owls.resids <- createDHARMa(simulatedResponse = t(preds),
-                            observedResponse = owls$NCalls,
+preds <- posterior_predict(owls_rstan1,  nsamples=250,  summary=FALSE)
+owls_resids <- createDHARMa(simulatedResponse = t(preds),
+                            observedResponse = owls$ncalls,
                             fittedPredictedResponse = apply(preds, 2, median))
-plot(owls.resids)
+plot(owls_resids)
 
 ```
 
@@ -206,202 +211,202 @@ plot(owls.resids)
 ## Foot treatment (deprived or satiated
 ## Sex of parent
 ## Arrival time of parent
-## Nest as random
+## nest as random
 ## Brood size offset
-owls = owls %>% mutate(Nest =factor(Nest),
-                       FoodTreatment = factor(FoodTreatment),
-                       SexParent = factor(SexParent),   
-                       NCalls = SiblingNegotiation)
+owls = owls %>% mutate(nest =factor(nest),
+                       food = factor(food),
+                       sex = factor(sex),   
+                       ncalls = SiblingNegotiation)
 ggplot(data = owls) +
-    geom_boxplot(aes(y = NCalls, x = Nest)) + 
-    facet_grid(SexParent ~ FoodTreatment)
+    geom_boxplot(aes(y = ncalls, x = nest)) + 
+    facet_grid(sex ~ food)
 
 ggplot(data=owls) +
-  geom_boxplot(aes(y=NCalls,  x=SexParent,  color=FoodTreatment)) +
-  facet_wrap(~Nest)
+  geom_boxplot(aes(y=ncalls,  x=sex,  color=food)) +
+  facet_wrap(~nest)
 
-ggplot(data = owls,aes(y = NCalls, x = ArrivalTime, color=SexParent)) +
+ggplot(data = owls,aes(y = ncalls, x = arrival_time, color=sex)) +
     geom_point() + 
     geom_smooth(method='lm') +
-  facet_grid(~FoodTreatment)
+  facet_grid(~food)
 
-owls.form <- bf(NCalls ~ FoodTreatment+scale(ArrivalTime) +
-                  offset(log(BroodSize)) + (1|Nest),
+owls_form <- bf(ncalls ~ food+scale(arrival_time) +
+                  offset(log(brood_size)) + (1|nest),
                 family=poisson(link='log'))
 
- owls.form <- bf(NCalls ~ FoodTreatment+SexParent +
-                  offset(log(BroodSize)) + (1|Nest),
+ owls_form <- bf(ncalls ~ food+sex +
+                  offset(log(brood_size)) + (1|nest),
                 family=(link='log'))
-owls.brmsP <- brm(owls.form,  data=owls, refresh=0, 
+owls_brmsP <- brm(owls_form,  data=owls, refresh=0, 
                   iter=5000,  warmup=2000,  thin=10,  chains=3, cores=3)
 
-owls.brmsP %>% get_variables()
-mcmc_plot(owls.brmsP,  type='trace')
-mcmc_plot(owls.brmsP,  type='acf_bar')
-mcmc_plot(owls.brmsP,  type='rhat_hist')
-mcmc_plot(owls.brmsP,  type='neff_hist')
-mcmc_plot(owls.brmsP,  type='trace', regex_pars='^b.Intercept|Food|Arrival|sd')
-mcmc_plot(owls.brmsP,  type='acf_bar', regex_pars='^b.Intercept|Food|Arrival|sd')
-mcmc_plot(owls.brmsP,  type='rhat_hist', regex_pars='^b.Intercept|Food|Arrival|sd')
-mcmc_plot(owls.brmsP,  type='neff_hist', regex_pars='^b.Intercept|Food|Arrival|sd')
+owls_brmsP %>% get_variables()
+mcmc_plot(owls_brmsP,  type='trace')
+mcmc_plot(owls_brmsP,  type='acf_bar')
+mcmc_plot(owls_brmsP,  type='rhat_hist')
+mcmc_plot(owls_brmsP,  type='neff_hist')
+mcmc_plot(owls_brmsP,  type='trace', regex_pars='^b.Intercept|Food|Arrival|sd')
+mcmc_plot(owls_brmsP,  type='acf_bar', regex_pars='^b.Intercept|Food|Arrival|sd')
+mcmc_plot(owls_brmsP,  type='rhat_hist', regex_pars='^b.Intercept|Food|Arrival|sd')
+mcmc_plot(owls_brmsP,  type='neff_hist', regex_pars='^b.Intercept|Food|Arrival|sd')
 
 library(DHARMa)
-preds <- posterior_predict(owls.brmsP,  nsamples=250,  summary=FALSE)
-owls.resids <- createDHARMa(simulatedResponse = t(preds),
-                            observedResponse = owls$NCalls,
+preds <- posterior_predict(owls_brmsP,  nsamples=250,  summary=FALSE)
+owls_resids <- createDHARMa(simulatedResponse = t(preds),
+                            observedResponse = owls$ncalls,
                             fittedPredictedResponse = apply(preds, 2, median),
                             integerResponse = TRUE)
-plot(owls.resids)
-testZeroInflation(owls.resids)
+plot(owls_resids)
+testZeroInflation(owls_resids)
 
 
 
-owls.form <- bf(NCalls ~ FoodTreatment+SexParent +
-                  offset(log(BroodSize)) + (1|Nest),
+owls_form <- bf(ncalls ~ food+sex +
+                  offset(log(brood_size)) + (1|nest),
                 family=negbinomial(link='log'))
-owls.brmsNB <- brm(owls.form,  data=owls, refresh=0, 
+owls_brmsNB <- brm(owls_form,  data=owls, refresh=0, 
                   iter=5000,  warmup=2000,  thin=10,  chains=3, cores=3)
 
-mcmc_plot(owls.brmsNB,  type='trace')
-mcmc_plot(owls.brmsNB,  type='acf_bar')
-mcmc_plot(owls.brmsNB,  type='rhat_hist')
-mcmc_plot(owls.brmsNB,  type='neff_hist')
-preds <- posterior_predict(owls.brmsNB,  nsamples=250,  summary=FALSE)
-owls.resids <- createDHARMa(simulatedResponse = t(preds),
-                            observedResponse = owls$NCalls,
+mcmc_plot(owls_brmsNB,  type='trace')
+mcmc_plot(owls_brmsNB,  type='acf_bar')
+mcmc_plot(owls_brmsNB,  type='rhat_hist')
+mcmc_plot(owls_brmsNB,  type='neff_hist')
+preds <- posterior_predict(owls_brmsNB,  nsamples=250,  summary=FALSE)
+owls_resids <- createDHARMa(simulatedResponse = t(preds),
+                            observedResponse = owls$ncalls,
                             fittedPredictedResponse = apply(preds, 2, median),
                             integerResponse = TRUE)
-plot(owls.resids)
-testZeroInflation(owls.resids)
+plot(owls_resids)
+testZeroInflation(owls_resids)
 
-owls.form <- bf(NCalls ~ FoodTreatment+scale(ArrivalTime) +
-                  offset(log(BroodSize)) + (1|Nest),
+owls_form <- bf(ncalls ~ food+scale(arrival_time) +
+                  offset(log(brood_size)) + (1|nest),
                 zi ~ 1, 
                 family=zero_inflated_poisson(link='log'))
 
-owls.brmsZIP <- brm(owls.form,  data=owls, refresh=0, 
+owls_brmsZIP <- brm(owls_form,  data=owls, refresh=0, 
                   iter=5000,  warmup=2000,  thin=10,  chains=3, cores=3)
 
-owls.brmsZIP %>% get_variables()
+owls_brmsZIP %>% get_variables()
 
-mcmc_plot(owls.brmsZIP,  type='trace')
+mcmc_plot(owls_brmsZIP,  type='trace')
 , regex_pars='^b.Intercept|Food|Arrival|sd')
-mcmc_plot(owls.brmsZIP,  type='acf_bar')
+mcmc_plot(owls_brmsZIP,  type='acf_bar')
 , regex_pars='^b.Intercept|Food|Arrival|sd')
-mcmc_plot(owls.brmsZIP,  type='rhat_hist')
+mcmc_plot(owls_brmsZIP,  type='rhat_hist')
 , regex_pars='^b.Intercept|Food|Arrival|sd')
-mcmc_plot(owls.brmsZIP,  type='neff_hist')
+mcmc_plot(owls_brmsZIP,  type='neff_hist')
 , regex_pars='^b.Intercept|Food|Arrival|sd')
 
 
-preds <- posterior_predict(owls.brmsZIP,  nsamples=250,  summary=FALSE)
-owls.resids <- createDHARMa(simulatedResponse = t(preds),
-                            observedResponse = owls$NCalls,
+preds <- posterior_predict(owls_brmsZIP,  nsamples=250,  summary=FALSE)
+owls_resids <- createDHARMa(simulatedResponse = t(preds),
+                            observedResponse = owls$ncalls,
                             fittedPredictedResponse = apply(preds, 2, median))
-plot(owls.resids)
+plot(owls_resids)
 
 
-owls.form <- bf(NCalls ~ FoodTreatment+scale(ArrivalTime) +
-                  offset(log(BroodSize)) + (1|Nest),
-                zi ~ scale(ArrivalTime), 
+owls_form <- bf(ncalls ~ food+scale(arrival_time) +
+                  offset(log(brood_size)) + (1|nest),
+                zi ~ scale(arrival_time), 
                 family=zero_inflated_poisson(link='log'))
 
-owls.brmsZIP1 <- brm(owls.form,  data=owls, refresh=0, 
+owls_brmsZIP1 <- brm(owls_form,  data=owls, refresh=0, 
                   iter=5000,  warmup=2000,  thin=10,  chains=3, cores=3)
 
-owls.brmsZIP1 %>% get_variables()
-mcmc_plot(owls.brmsZIP1,  type='trace', regex_pars='^b.Intercept|Food|Arrival|sd')
-mcmc_plot(owls.brmsZIP1,  type='acf_bar', regex_pars='^b.Intercept|Food|Arrival|sd')
-mcmc_plot(owls.brmsZIP1,  type='rhat_hist', regex_pars='^b.Intercept|Food|Arrival|sd')
-mcmc_plot(owls.brmsZIP1,  type='neff_hist', regex_pars='^b.Intercept|Food|Arrival|sd')
+owls_brmsZIP1 %>% get_variables()
+mcmc_plot(owls_brmsZIP1,  type='trace', regex_pars='^b.Intercept|Food|Arrival|sd')
+mcmc_plot(owls_brmsZIP1,  type='acf_bar', regex_pars='^b.Intercept|Food|Arrival|sd')
+mcmc_plot(owls_brmsZIP1,  type='rhat_hist', regex_pars='^b.Intercept|Food|Arrival|sd')
+mcmc_plot(owls_brmsZIP1,  type='neff_hist', regex_pars='^b.Intercept|Food|Arrival|sd')
 
 
-preds <- posterior_predict(owls.brmsZIP1,  nsamples=250,  summary=FALSE)
-owls.resids <- createDHARMa(simulatedResponse = t(preds),
-                            observedResponse = owls$NCalls,
+preds <- posterior_predict(owls_brmsZIP1,  nsamples=250,  summary=FALSE)
+owls_resids <- createDHARMa(simulatedResponse = t(preds),
+                            observedResponse = owls$ncalls,
                             fittedPredictedResponse = apply(preds, 2, median),
                             integerResponse=TRUE)
-plot(owls.resids)
+plot(owls_resids)
 
 
-owls.form <- bf(NCalls ~ FoodTreatment+scale(ArrivalTime) +
-                  offset(log(BroodSize)) + (1|Nest),
-                zi ~ scale(ArrivalTime), 
+owls_form <- bf(ncalls ~ food+scale(arrival_time) +
+                  offset(log(brood_size)) + (1|nest),
+                zi ~ scale(arrival_time), 
                 family=zero_inflated_negbinomial(link='log'))
 
-owls.brmsZINB <- brm(owls.form,  data=owls, refresh=0, 
+owls_brmsZINB <- brm(owls_form,  data=owls, refresh=0, 
                   iter=5000,  warmup=2000,  thin=10,  chains=3, cores=3)
 
-owls.brmsZINB %>% get_variables()
-mcmc_plot(owls.brmsZINB,  type='trace', regex_pars='^b.Intercept|Food|Arrival|sd')
-mcmc_plot(owls.brmsZINB,  type='acf_bar', regex_pars='^b.Intercept|Food|Arrival|sd')
-mcmc_plot(owls.brmsZINB,  type='rhat_hist', regex_pars='^b.Intercept|Food|Arrival|sd')
-mcmc_plot(owls.brmsZINB,  type='neff_hist', regex_pars='^b.Intercept|Food|Arrival|sd')
+owls_brmsZINB %>% get_variables()
+mcmc_plot(owls_brmsZINB,  type='trace', regex_pars='^b.Intercept|Food|Arrival|sd')
+mcmc_plot(owls_brmsZINB,  type='acf_bar', regex_pars='^b.Intercept|Food|Arrival|sd')
+mcmc_plot(owls_brmsZINB,  type='rhat_hist', regex_pars='^b.Intercept|Food|Arrival|sd')
+mcmc_plot(owls_brmsZINB,  type='neff_hist', regex_pars='^b.Intercept|Food|Arrival|sd')
 
 
-preds <- posterior_predict(owls.brmsZINB,  nsamples=250,  summary=FALSE)
-owls.resids <- createDHARMa(simulatedResponse = t(preds),
-                            observedResponse = owls$NCalls,
+preds <- posterior_predict(owls_brmsZINB,  nsamples=250,  summary=FALSE)
+owls_resids <- createDHARMa(simulatedResponse = t(preds),
+                            observedResponse = owls$ncalls,
                             fittedPredictedResponse = apply(preds, 2, median))
-plot(owls.resids)
+plot(owls_resids)
 
 
-owls.form <- bf(NCalls ~ FoodTreatment*scale(ArrivalTime) +
-                  offset(log(BroodSize)) + (scale(ArrivalTime)|Nest),
-                zi ~ scale(ArrivalTime), 
+owls_form <- bf(ncalls ~ food*scale(arrival_time) +
+                  offset(log(brood_size)) + (scale(arrival_time)|nest),
+                zi ~ scale(arrival_time), 
                 family=zero_inflated_negbinomial(link='log'))
 
-owls.brmsZINB2 <- brm(owls.form,  data=owls, refresh=0, 
+owls_brmsZINB2 <- brm(owls_form,  data=owls, refresh=0, 
                   iter=5000,  warmup=2000,  thin=10,  chains=3, cores=3)
 
-owls.brmsZINB1 %>% get_variables()
-mcmc_plot(owls.brmsZINB2,  type='trace', regex_pars='^b.Intercept|Food|Arrival|sd')
-mcmc_plot(owls.brmsZINB1,  type='acf_bar', regex_pars='^b.Intercept|Food|Arrival|sd')
-mcmc_plot(owls.brmsZINB1,  type='rhat_hist', regex_pars='^b.Intercept|Food|Arrival|sd')
-mcmc_plot(owls.brmsZINB1,  type='neff_hist', regex_pars='^b.Intercept|Food|Arrival|sd')
+owls_brmsZINB1 %>% get_variables()
+mcmc_plot(owls_brmsZINB2,  type='trace', regex_pars='^b.Intercept|Food|Arrival|sd')
+mcmc_plot(owls_brmsZINB1,  type='acf_bar', regex_pars='^b.Intercept|Food|Arrival|sd')
+mcmc_plot(owls_brmsZINB1,  type='rhat_hist', regex_pars='^b.Intercept|Food|Arrival|sd')
+mcmc_plot(owls_brmsZINB1,  type='neff_hist', regex_pars='^b.Intercept|Food|Arrival|sd')
 
 
-preds <- posterior_predict(owls.brmsZINB2,  nsamples=250,  summary=FALSE)
-owls.resids <- createDHARMa(simulatedResponse = t(preds),
-                            observedResponse = owls$NCalls,
+preds <- posterior_predict(owls_brmsZINB2,  nsamples=250,  summary=FALSE)
+owls_resids <- createDHARMa(simulatedResponse = t(preds),
+                            observedResponse = owls$ncalls,
                             fittedPredictedResponse = apply(preds, 2, median),
                             integerResponse = TRUE)
-plot(owls.resids)
+plot(owls_resids)
 
-testZeroInflation(owls.resids)
-testDispersion(owls.resids)
+testZeroInflation(owls_resids)
+testDispersion(owls_resids)
 
-owls.form <- bf(NCalls ~ FoodTreatment*SexParent +
-                  offset(log(BroodSize)) + (1|Nest),
-                zi ~ FoodTreatment+SexParent, 
+owls_form <- bf(ncalls ~ food*sex +
+                  offset(log(brood_size)) + (1|nest),
+                zi ~ food+sex, 
                 family=zero_inflated_negbinomial(link='log'))
 
-owls.brmsZINB2 <- brm(owls.form,  data=owls, refresh=0, 
+owls_brmsZINB2 <- brm(owls_form,  data=owls, refresh=0, 
                   iter=5000,  warmup=2000,  thin=10,  chains=3, cores=3)
-testTemporalAutocorrelation(owls.resids,  time=owls$ArrivalTime)
-owls.resids1 <- recalculateResiduals(owls.resids,  group=interaction(owls$ArrivalTime,  owls$Nest),  aggregateBy = mean)
-testTemporalAutocorrelation(owls.resids1,  time=unique(owls$ArrivalTime))
+testTemporalAutocorrelation(owls_resids,  time=owls$arrival_time)
+owls_resids1 <- recalculateResiduals(owls_resids,  group=interaction(owls$arrival_time,  owls$nest),  aggregateBy = mean)
+testTemporalAutocorrelation(owls_resids1,  time=unique(owls$arrival_time))
 
-summary(owls.brmsZINB2)
-tidyMCMC(owls.brmsZINB2$fit,  estimate.method='median',
+summary(owls_brmsZINB2)
+tidyMCMC(owls_brmsZINB2$fit,  estimate.method='median',
          conf.int=TRUE,  conf.method='HPDinterval',
          rhat=TRUE,  ess=TRUE)
 
 
-owls.grid = with(owls, list(FoodTreatment=levels(FoodTreatment),
-                            ArrivalTime=modelr::seq_range(ArrivalTime,  n=100)
+owls_grid = with(owls, list(food=levels(food),
+                            arrival_time=modelr::seq_range(arrival_time,  n=100)
                             ))
-owls.grid = with(owls,  list(FoodTreatment=levels(FoodTreatment),
-                             ArrivalTime=seq(min(ArrivalTime),  max(ArrivalTime),  len=100)))
+owls_grid = with(owls,  list(food=levels(food),
+                             arrival_time=seq(min(arrival_time),  max(arrival_time),  len=100)))
 
-newdata = emmeans(owls.brmsZINB2, ~SexParent|FoodTreatment, at=owls.grid,
+newdata = emmeans(owls_brmsZINB2, ~sex|food, at=owls_grid,
                   type='response') %>%
   as.data.frame
 head(newdata)
 ggplot(newdata) +
-  geom_pointrange(aes(y=prob,  x=FoodTreatment,  color=SexParent,  ymin=lower.HPD,  ymax=upper.HPD),  position=position_dodge(width=0.2))
-ggplot(newdata, aes(y=prob, x=as.numeric(SexParent)) +
-    geom_line(aes(color=FoodTreatment)) +
-    geom_ribbon(aes(ymin=lower.HPD, ymax=upper.HPD, fill=FoodTreatment), alpha=0.2)
+  geom_pointrange(aes(y=prob,  x=food,  color=sex,  ymin=lower.HPD,  ymax=upper.HPD),  position=position_dodge(width=0.2))
+ggplot(newdata, aes(y=prob, x=as.numeric(sex)) +
+    geom_line(aes(color=food)) +
+    geom_ribbon(aes(ymin=lower.HPD, ymax=upper.HPD, fill=food), alpha=0.2)
 
 ```

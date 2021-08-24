@@ -1,5 +1,5 @@
 ---
-title: "Bayesian GLMM Part2"
+title: "Bayesian GLMM Part 2"
 author: "Murray Logan"
 date: "`r format(Sys.time(), '%d %B, %Y')`"
 output:
@@ -39,6 +39,8 @@ mathfont: LiberationMono
 monofont: DejaVu Sans Mono
 classoption: a4paper
 bibliography: ../resources/references.bib
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r setup, include=FALSE, warnings=FALSE, message=FALSE}
@@ -61,6 +63,7 @@ library(DHARMa)     #for residual diagnostics
 library(tidybayes)  #for more tidying outputs
 library(ggeffects)  #for partial plots
 library(tidyverse)  #for data wrangling etc
+theme_set(theme_classic())
 ```
 
 # Scenario
@@ -79,9 +82,9 @@ Fish mass was also recorded as a covariate as this is known to influence metabol
 
 ![Barramundi](../resources/barramundi.png){width="310"}
 
-Format of norin.csv data files
+Format of norin_csv data files
 
-FISHID   MASS    TRIAL             SMR\_contr   CHANGE
+fishid   MASS    trial             SMR\_contr   CHANGE
 -------- ------- ----------------- ------------ --------
 1        35.69   LowSalinity       5.85         -31.92
 2        33.84   LowSalinity       6.53         2.52
@@ -98,9 +101,9 @@ FISHID   MASS    TRIAL             SMR\_contr   CHANGE
 
 
 ---------------- ------------------------------------------------------------------------------------------------------------------------------------------------------
-**FISHID**       Categorical listing of the individual fish that are repeatedly sampled
+**fishid**       Categorical listing of the individual fish that are repeatedly sampled
 **MASS**         Mass (g) of barramundi. Covariate in analysis
-**TRIAL**        Categorical listing of the trial (LowSalinity: 10ppt salinity; HighTemperature: 35 degrees; Hypoxia: 45% air-sat. oxygen.
+**trial**        Categorical listing of the trial (LowSalinity: 10ppt salinity; HighTemperature: 35 degrees; Hypoxia: 45% air-sat. oxygen.
 **SMR\_contr**   Standard metabolic rate (mg/h/39.4 g of fish) under control trial conditions (35 ppt salinity, 29 degrees, normoxia)
 **CHANGE**       Percentage difference in Standard metabolic rate (mg/h/39.4 g of fish) between Trial conditions and control adjusted for \'regression to the mean\'.
 ---------------- ------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -108,7 +111,10 @@ FISHID   MASS    TRIAL             SMR\_contr   CHANGE
 # Read in the data
 
 ```{r readData, results='markdown', eval=TRUE}
-norin = read_csv('../data/norin.csv', trim_ws=TRUE)
+norin <- read_csv('../data/norin.csv', trim_ws=TRUE) %>%
+  janitor::clean_names() %>%
+  mutate(fishid = factor(fishid),
+         trial = factor(trial))
 glimpse(norin)
 ```
 
@@ -128,257 +134,255 @@ $\bf{Z}$ represents a cell means model matrix for the random intercepts associat
 # Fit the model
 
 ```{r fitModels, results='markdown', eval=FALSE, hidden=TRUE}
-norin = norin %>% mutate(FISHID=factor(FISHID),
-                         TRIAL=factor(TRIAL))
 
-ggplot(norin, aes(y=CHANGE, x=TRIAL)) + geom_boxplot()
-ggplot(norin, aes(y=CHANGE, x=SMR_contr, shape=TRIAL, color=TRIAL)) +
+ggplot(norin, aes(y=CHANGE, x=trial)) + geom_boxplot()
+ggplot(norin, aes(y=CHANGE, x=SMR_contr, shape=trial, color=trial)) +
     geom_smooth(method='lm') + geom_point()
-#ggplot(norin, aes(y=CHANGE, x=MASS, shape=TRIAL, color=TRIAL)) +
+#ggplot(norin, aes(y=CHANGE, x=MASS, shape=trial, color=trial)) +
 #    geom_smooth(method='lm') + geom_point()
-ggplot(norin, aes(y=CHANGE, x=as.numeric(FISHID), color=TRIAL)) +
+ggplot(norin, aes(y=CHANGE, x=as.numeric(fishid), color=trial)) +
     geom_point() + geom_line()
 
-#ggplot(norin, aes(y=MASS, x=TRIAL)) + geom_boxplot()
-ggplot(norin, aes(y=CHANGE, x=MASS, color=TRIAL)) + geom_point() + geom_smooth(method='lm')
+#ggplot(norin, aes(y=MASS, x=trial)) + geom_boxplot()
+ggplot(norin, aes(y=CHANGE, x=MASS, color=trial)) + geom_point() + geom_smooth(method='lm')
 
-norin.rstanarm = stan_glmer(CHANGE ~ (1|FISHID)+TRIAL*SMR_contr+MASS, data=norin,
+norin_rstanarm = stan_glmer(CHANGE ~ (1|fishid)+trial*SMR_contr+MASS, data=norin,
                             prior_PD=TRUE, 
                          iter=5000, warmup=2000, chains=3, thin=5, refresh=0)
-prior_summary(norin.rstanarm)
+prior_summary(norin_rstanarm)
 
-posterior_vs_prior(norin.rstanarm, color_by='vs', group_by=TRUE,
+posterior_vs_prior(norin_rstanarm, color_by='vs', group_by=TRUE,
                    facet_args=list(scales='free_y'), pars=c('(Intercept)'))
-ggpredict(norin.rstanarm, ~TRIAL*SMR_contr) %>% plot(add.data=TRUE)
+ggpredict(norin_rstanarm, ~trial*SMR_contr) %>% plot(add.data=TRUE)
 
-norin.rstanarm %>% get_variables()
-plot(norin.rstanarm,  'mcmc_trace', regex_pars='^.Intercept|TRIAL|SMR|MASS|[sS]igma')
-plot(norin.rstanarm,  'mcmc_acf_bar', regex_pars='^.Intercept|TRIAL|SMR|MASS|[sS]igma')
-plot(norin.rstanarm,  'mcmc_rhat_hist', regex_pars='^.Intercept|TRIAL|SMR|MASS|[sS]igma')
-plot(norin.rstanarm,  'mcmc_neff_hist', regex_pars='^.Intercept|TRIAL|SMR|MASS|[sS]igma')
+norin_rstanarm %>% get_variables()
+plot(norin_rstanarm,  'mcmc_trace', regex_pars='^.Intercept|trial|SMR|MASS|[sS]igma')
+plot(norin_rstanarm,  'mcmc_acf_bar', regex_pars='^.Intercept|trial|SMR|MASS|[sS]igma')
+plot(norin_rstanarm,  'mcmc_rhat_hist', regex_pars='^.Intercept|trial|SMR|MASS|[sS]igma')
+plot(norin_rstanarm,  'mcmc_neff_hist', regex_pars='^.Intercept|trial|SMR|MASS|[sS]igma')
 
-#norin.rstan1 = stan_glmer(CHANGE ~ (TRIAL|FISHID)+TRIAL*SMR_contr+MASS, data=norin,
+#norin_rstan1 = stan_glmer(CHANGE ~ (trial|fishid)+trial*SMR_contr+MASS, data=norin,
 #                          iter=5000, warmup=2000, chains=3, thin=5, refresh=0, cores=3)
-norin.rstanarm1 = stan_glmer(CHANGE ~ (SMR_contr|FISHID) + TRIAL*SMR_contr+MASS, data=norin,
+norin_rstanarm1 = stan_glmer(CHANGE ~ (SMR_contr|fishid) + trial*SMR_contr+MASS, data=norin,
                              prior_PD=FALSE, 
                           iter=5000, warmup=2000, chains=3, thin=5, refresh=0, cores=3)
-norin.rstanarm1 = update(norin.rstanarm1,  prior_PD=FALSE)
+norin_rstanarm1 = update(norin_rstanarm1,  prior_PD=FALSE)
 
 
 
-norin.rstanarm2 = stan_glmer(CHANGE ~ (TRIAL*SMR_contr|FISHID) + TRIAL*SMR_contr+MASS, data=norin,
+norin_rstanarm2 = stan_glmer(CHANGE ~ (trial*SMR_contr|fishid) + trial*SMR_contr+MASS, data=norin,
                              prior_PD=FALSE, 
                           iter=5000, warmup=2000, chains=3, thin=5, refresh=0, cores=3)
 
-posterior_vs_prior(norin.rstanarm1, color_by='vs', group_by=TRUE,
+posterior_vs_prior(norin_rstanarm1, color_by='vs', group_by=TRUE,
                    facet_args=list(scales='free_y'), pars=c('(Intercept)'))
 
-ggpredict(norin.rstanarm1, ~TRIAL*SMR_contr) %>% plot(add.data=TRUE)
+ggpredict(norin_rstanarm1, ~trial*SMR_contr) %>% plot(add.data=TRUE)
 
-norin.rstanarm1 %>% get_variables()
-plot(norin.rstanarm1,  'mcmc_trace', regex_pars='^.Intercept|TRIAL|^SMR|MASS|[sS]igma')
-plot(norin.rstanarm1,  'mcmc_acf_bar', regex_pars='^.Intercept|TRIAL|^SMR|MASS|[sS]igma')
-plot(norin.rstanarm1,  'mcmc_rhat_hist', regex_pars='^.Intercept|TRIAL|^SMR|MASS|[sS]igma')
-plot(norin.rstanarm1,  'mcmc_neff_hist', regex_pars='^.Intercept|TRIAL|^SMR|MASS|[sS]igma')
+norin_rstanarm1 %>% get_variables()
+plot(norin_rstanarm1,  'mcmc_trace', regex_pars='^.Intercept|trial|^SMR|MASS|[sS]igma')
+plot(norin_rstanarm1,  'mcmc_acf_bar', regex_pars='^.Intercept|trial|^SMR|MASS|[sS]igma')
+plot(norin_rstanarm1,  'mcmc_rhat_hist', regex_pars='^.Intercept|trial|^SMR|MASS|[sS]igma')
+plot(norin_rstanarm1,  'mcmc_neff_hist', regex_pars='^.Intercept|trial|^SMR|MASS|[sS]igma')
 
 
-(l.1 <- loo(norin.rstanarm))
-(l.2 <- loo(norin.rstanarm1))
+(l.1 <- loo(norin_rstanarm))
+(l.2 <- loo(norin_rstanarm1))
 loo_compare(l.1,  l.2)
 
 
-preds <- posterior_predict(norin.rstanarm,  nsamples=250,  summary=FALSE)
-norin.resids <- createDHARMa(simulatedResponse = t(preds),
+preds <- posterior_predict(norin_rstanarm,  nsamples=250,  summary=FALSE)
+norin_resids <- createDHARMa(simulatedResponse = t(preds),
                             observedResponse = norin$CHANGE,
                             fittedPredictedResponse = apply(preds, 2, median))
-plot(norin.resids)
+plot(norin_resids)
 
 
-g=ggpredict(norin.rstanarm) %>% plot
+g=ggpredict(norin_rstanarm) %>% plot
 do.call('grid.arrange', g)
 
-#ggemmeans(norin.rstan, ~TRIAL)
+#ggemmeans(norin_rstan, ~trial)
 
-summary(norin.rstanarm)
-nms <- norin.rstanarm1 %>% get_variables()
-wch <- grep('^.Intercept|TRIAL|^SMR|[sS]igma', nms)
-tidyMCMC(norin.rstanarm$stanfit,conf.int=TRUE, conf.method='HPDinterval',
+summary(norin_rstanarm)
+nms <- norin_rstanarm1 %>% get_variables()
+wch <- grep('^.Intercept|trial|^SMR|[sS]igma', nms)
+tidyMCMC(norin_rstanarm$stanfit,conf.int=TRUE, conf.method='HPDinterval',
          rhat=TRUE, ess=TRUE, pars=nms[wch], estimate.method='median')
 
-tidyMCMC(norin.rstanarm1$stanfit,conf.int=TRUE, conf.method='HPDinterval',
+tidyMCMC(norin_rstanarm1$stanfit,conf.int=TRUE, conf.method='HPDinterval',
          rhat=TRUE, ess=TRUE, pars=nms[wch], estimate.method='median')
 
 
-norin.grid = with(norin, list(SMR_contr=seq(min(SMR_contr),max(SMR_contr), len=100)))
-newdata = emmeans(norin.rstanarm, ~TRIAL|SMR_contr, at=norin.grid) %>% as.data.frame
+norin_grid = with(norin, list(SMR_contr=seq(min(SMR_contr),max(SMR_contr), len=100)))
+newdata = emmeans(norin_rstanarm, ~trial|SMR_contr, at=norin_grid) %>% as.data.frame
 head(newdata)
-ggplot(newdata, aes(y=emmean, x=SMR_contr, color=TRIAL)) +
-    geom_ribbon(aes(ymin=lower.HPD, ymax=upper.HPD, fill=TRIAL), alpha=0.3,color=NA) +
+ggplot(newdata, aes(y=emmean, x=SMR_contr, color=trial)) +
+    geom_ribbon(aes(ymin=lower.HPD, ymax=upper.HPD, fill=trial), alpha=0.3,color=NA) +
     geom_line()
 
-norin.grid = with(norin, list(SMR_contr=c(min(SMR_contr),mean(SMR_contr),max(SMR_contr))))
+norin_grid = with(norin, list(SMR_contr=c(min(SMR_contr),mean(SMR_contr),max(SMR_contr))))
 
-emmeans(norin.rstan, pairwise~TRIAL|SMR_contr, at=norin.grid)
+emmeans(norin_rstan, pairwise~trial|SMR_contr, at=norin_grid)
 
-norin.em = emmeans(norin.rstan, pairwise~TRIAL|SMR_contr, at=norin.grid)$contrast %>%
+norin_em = emmeans(norin_rstan, pairwise~trial|SMR_contr, at=norin_grid)$contrast %>%
               gather_emmeans_draws() %>%
               mutate(Fit=.value)
-norin.em
-norin.em %>% group_by(contrast) %>% median_hdci(Fit)
-norin.em %>% group_by(contrast, SMR_contr) %>% median_hdci(Fit)
-## norin.em %>%
+norin_em
+norin_em %>% group_by(contrast) %>% median_hdci(Fit)
+norin_em %>% group_by(contrast, SMR_contr) %>% median_hdci(Fit)
+## norin_em %>%
 ##     group_by(contrast) %>%
 ##     summarize(P=sum(Fit>0)/n())
-norin.em %>%
+norin_em %>%
     group_by(contrast, SMR_contr) %>%
     summarize(P=sum(Fit>0)/n())
 
 
-bayes_R2(norin.rstanarm, re.form=NA) %>% median_hdi
-bayes_R2(norin.rstanarm, re.form=~(1|FISHID)) %>% median_hdi
-#bayes_R2(norin.rstan1, re.form=~(SMR_contr|FISHID)) %>% median_hdi
+bayes_R2(norin_rstanarm, re.form=NA) %>% median_hdi
+bayes_R2(norin_rstanarm, re.form=~(1|fishid)) %>% median_hdi
+#bayes_R2(norin_rstan1, re.form=~(SMR_contr|fishid)) %>% median_hdi
 
 ```
 
 
 ```{r fitModels.brms, results='markdown', eval=FALSE, hidden=TRUE}
-norin = norin %>% mutate(FISHID=factor(FISHID),
-                         TRIAL=factor(TRIAL))
+norin = norin %>% mutate(fishid=factor(fishid),
+                         trial=factor(trial))
 
-ggplot(norin, aes(y=CHANGE, x=TRIAL)) + geom_boxplot()
-ggplot(norin, aes(y=CHANGE, x=SMR_contr, shape=TRIAL, color=TRIAL)) +
+ggplot(norin, aes(y=CHANGE, x=trial)) + geom_boxplot()
+ggplot(norin, aes(y=CHANGE, x=SMR_contr, shape=trial, color=trial)) +
     geom_smooth(method='lm') + geom_point()
-ggplot(norin, aes(y=CHANGE, x=MASS, shape=TRIAL, color=TRIAL)) +
+ggplot(norin, aes(y=CHANGE, x=MASS, shape=trial, color=trial)) +
     geom_smooth(method='lm') + geom_point()
-ggplot(norin, aes(y=CHANGE, x=as.numeric(FISHID), color=TRIAL)) +
+ggplot(norin, aes(y=CHANGE, x=as.numeric(fishid), color=trial)) +
     geom_point() + geom_line()
 
-ggplot(norin, aes(y=MASS, x=TRIAL)) + geom_boxplot()
-ggplot(norin, aes(y=CHANGE, x=MASS, color=TRIAL)) + geom_point() + geom_smooth(method='lm')
+ggplot(norin, aes(y=MASS, x=trial)) + geom_boxplot()
+ggplot(norin, aes(y=CHANGE, x=MASS, color=trial)) + geom_point() + geom_smooth(method='lm')
 
 
-norin.form <- bf(CHANGE ~ (1|FISHID)+TRIAL*SMR_contr+MASS, family=gaussian)
+norin_form <- bf(CHANGE ~ (1|fishid)+trial*SMR_contr+MASS, family=gaussian)
 
-norin.brms = brm(norin.form, data=norin,
+norin_brms = brm(norin_form, data=norin,
                  iter=5000, warmup=2000, chains=3, thin=5, refresh=0)
 
-norin.brms %>% get_variables()
+norin_brms %>% get_variables()
 
-mcmc_plot(norin.brms,  type='trace',
+mcmc_plot(norin_brms,  type='trace',
           regex_pars='^b.*|sigma|^sd')
 
-mcmc_plot(norin.brms,  type='trace',
-          regex_pars='^b.Intercept|TRIAL|SMR|MASS|[sS]igma|^sd')
-mcmc_plot(norin.brms,  type='acf_bar',
-          regex_pars='^b.Intercept|TRIAL|SMR|MASS|[sS]igma|^sd')
-mcmc_plot(norin.brms,  type='rhat_hist',
-          regex_pars='^b.Intercept|TRIAL|SMR|MASS|[sS]igma|^sd')
-mcmc_plot(norin.brms,  type='neff_hist',
-          regex_pars='^b.Intercept|TRIAL|SMR|MASS|[sS]igma|^sd')
+mcmc_plot(norin_brms,  type='trace',
+          regex_pars='^b.Intercept|trial|SMR|MASS|[sS]igma|^sd')
+mcmc_plot(norin_brms,  type='acf_bar',
+          regex_pars='^b.Intercept|trial|SMR|MASS|[sS]igma|^sd')
+mcmc_plot(norin_brms,  type='rhat_hist',
+          regex_pars='^b.Intercept|trial|SMR|MASS|[sS]igma|^sd')
+mcmc_plot(norin_brms,  type='neff_hist',
+          regex_pars='^b.Intercept|trial|SMR|MASS|[sS]igma|^sd')
 
-preds <- posterior_predict(norin.brms,  nsamples=250,  summary=FALSE)
-norin.resids <- createDHARMa(simulatedResponse = t(preds),
+preds <- posterior_predict(norin_brms,  nsamples=250,  summary=FALSE)
+norin_resids <- createDHARMa(simulatedResponse = t(preds),
                             observedResponse = norin$CHANGE,
                             fittedPredictedResponse = apply(preds, 2, median),
                             integerResponse =FALSE)
-plot(norin.resids)
-#norin.rstan1 = stan_glmer(CHANGE ~ (TRIAL|FISHID)+TRIAL*SMR_contr+MASS, data=norin,
+plot(norin_resids)
+#norin_rstan1 = stan_glmer(CHANGE ~ (trial|fishid)+trial*SMR_contr+MASS, data=norin,
 #                          iter=5000, warmup=2000, chains=3, thin=5, refresh=0, cores=3)
-norin.form <- bf(CHANGE ~ (SMR_contr|FISHID) + TRIAL*SMR_contr+MASS, family=gaussian)
-norin.brms1 = brm(norin.form, data=norin,
+norin_form <- bf(CHANGE ~ (SMR_contr|fishid) + trial*SMR_contr+MASS, family=gaussian)
+norin_brms1 = brm(norin_form, data=norin,
                   iter=5000, warmup=2000, chains=3, thin=5, refresh=0, cores=3,
                   control=list(adapt_delta=0.99))
 
-norin.brms1 %>% get_variables()
+norin_brms1 %>% get_variables()
 
-mcmc_plot(norin.brms1,  type='trace',
-          regex_pars='^b.Intercept|TRIAL|SMR|MASS|[sS]igma|^sd')
+mcmc_plot(norin_brms1,  type='trace',
+          regex_pars='^b.Intercept|trial|SMR|MASS|[sS]igma|^sd')
 
-mcmc_plot(norin.brms1,  type='trace',
-          regex_pars='^b.Intercept|TRIAL|SMR|MASS|[sS]igma|^sd')
-mcmc_plot(norin.brms1,  type='acf_bar',
-          regex_pars='^b.Intercept|TRIAL|SMR|MASS|[sS]igma|^sd')
-mcmc_plot(norin.brms1,  type='rhat_hist',
-          regex_pars='^b.Intercept|TRIAL|SMR|MASS|[sS]igma|^sd')
-mcmc_plot(norin.brms1,  type='neff_hist',
-          regex_pars='^b.Intercept|TRIAL|SMR|MASS|[sS]igma|^sd')
+mcmc_plot(norin_brms1,  type='trace',
+          regex_pars='^b.Intercept|trial|SMR|MASS|[sS]igma|^sd')
+mcmc_plot(norin_brms1,  type='acf_bar',
+          regex_pars='^b.Intercept|trial|SMR|MASS|[sS]igma|^sd')
+mcmc_plot(norin_brms1,  type='rhat_hist',
+          regex_pars='^b.Intercept|trial|SMR|MASS|[sS]igma|^sd')
+mcmc_plot(norin_brms1,  type='neff_hist',
+          regex_pars='^b.Intercept|trial|SMR|MASS|[sS]igma|^sd')
 
 
 
-(l.1 <- loo(norin.brms))
-(l.2 <- loo(norin.brms1))
+(l.1 <- loo(norin_brms))
+(l.2 <- loo(norin_brms1))
 loo_compare(l.1,  l.2)
 
 
-preds <- posterior_predict(norin.brms1,  nsamples=250,  summary=FALSE)
-norin.resids <- createDHARMa(simulatedResponse = t(preds),
+preds <- posterior_predict(norin_brms1,  nsamples=250,  summary=FALSE)
+norin_resids <- createDHARMa(simulatedResponse = t(preds),
                             observedResponse = norin$CHANGE,
                             fittedPredictedResponse = apply(preds, 2, median))
-plot(norin.resids)
+plot(norin_resids)
 
 
-g=ggpredict(norin.brms1) %>% plot
+g=ggpredict(norin_brms1) %>% plot
 library(patchwork)
 g[[1]] + g[[2]] + g[[3]]
 
 do.call('grid.arrange', g)
 
-ggemmeans(norin.brms1, ~TRIAL) %>% plot
+ggemmeans(norin_brms1, ~trial) %>% plot
 
-tidyMCMC(norin.brms1$fit,conf.int=TRUE, conf.method='HPDinterval',
+tidyMCMC(norin_brms1$fit,conf.int=TRUE, conf.method='HPDinterval',
          rhat=TRUE, ess=TRUE, estimate.method='median') %>%
   slice(1:11)
 
-nms <- norin.brms1 %>% get_variables()
-wch <- grep('^b.Intercept|TRIAL|^b.*SMR|[sS]igma|^sd', nms)
-tidyMCMC(norin.brms1$fit,conf.int=TRUE, conf.method='HPDinterval',
+nms <- norin_brms1 %>% get_variables()
+wch <- grep('^b.Intercept|trial|^b.*SMR|[sS]igma|^sd', nms)
+tidyMCMC(norin_brms1$fit,conf.int=TRUE, conf.method='HPDinterval',
          rhat=TRUE, ess=TRUE, pars=nms[wch], estimate.method='median')
 
-emmeans(norin.brms1, pairwise~TRIAL)
+emmeans(norin_brms1, pairwise~trial)
 
 
-norin.em = emmeans(norin.brms1, pairwise~TRIAL)$contrast %>%
+norin_em = emmeans(norin_brms1, pairwise~trial)$contrast %>%
               gather_emmeans_draws() %>%
               mutate(Fit=.value)
 
-norin.em %>%
+norin_em %>%
   group_by(contrast) %>%
   median_hdi()
 
-norin.em %>%
+norin_em %>%
     group_by(contrast) %>%
   summarize(P=sum(Fit>0)/n())
 
 
-norin.em %>%
+norin_em %>%
   group_by(contrast, SMR_contr) %>%
   summarize(P=sum(Fit>0)/n())
 
-norin.grid = with(norin, list(SMR_contr=seq(min(SMR_contr),max(SMR_contr), len=100)))
-newdata = emmeans(norin.brms1, ~SMR_contr|TRIAL, at=norin.grid) %>% as.data.frame
+norin_grid = with(norin, list(SMR_contr=seq(min(SMR_contr),max(SMR_contr), len=100)))
+newdata = emmeans(norin_brms1, ~SMR_contr|trial, at=norin_grid) %>% as.data.frame
 head(newdata)
-ggplot(newdata, aes(y=emmean, x=SMR_contr, color=TRIAL)) +
-    geom_ribbon(aes(ymin=lower.HPD, ymax=upper.HPD, fill=TRIAL), alpha=0.3,color=NA) +
+ggplot(newdata, aes(y=emmean, x=SMR_contr, color=trial)) +
+    geom_ribbon(aes(ymin=lower.HPD, ymax=upper.HPD, fill=trial), alpha=0.3,color=NA) +
     geom_line()
 
-norin.grid = with(norin, list(SMR_contr=c(min(SMR_contr),mean(SMR_contr),max(SMR_contr))))
+norin_grid = with(norin, list(SMR_contr=c(min(SMR_contr),mean(SMR_contr),max(SMR_contr))))
 
-emmeans(norin.brms1, pairwise~TRIAL|SMR_contr, at=norin.grid)
+emmeans(norin_brms1, pairwise~trial|SMR_contr, at=norin_grid)
 
-norin.em = emmeans(norin.brms1, pairwise~TRIAL|SMR_contr, at=norin.grid)$contrast %>%
+norin_em = emmeans(norin_brms1, pairwise~trial|SMR_contr, at=norin_grid)$contrast %>%
                                                                        gather_emmeans_draws()
-norin.em %>% head
-norin.em %>%
+norin_em %>% head
+norin_em %>%
     group_by(contrast, SMR_contr) %>%
     median_hdi()
 
-norin.em %>%
+norin_em %>%
     group_by(contrast, SMR_contr) %>%
     summarize(P=sum(.value>0)/n())
 
-bayes_R2(norin.brms1, re.form=NA,  summary=FALSE) %>% median_hdi
-bayes_R2(norin.brms1, re.form=~(1|FISHID), summary=FALSE) %>% median_hdi
-bayes_R2(norin.brms1, re.form=~(SMR_contr|FISHID), summary=FALSE) %>% median_hdi
+bayes_R2(norin_brms1, re.form=NA,  summary=FALSE) %>% median_hdi
+bayes_R2(norin_brms1, re.form=~(1|fishid), summary=FALSE) %>% median_hdi
+bayes_R2(norin_brms1, re.form=~(SMR_contr|fishid), summary=FALSE) %>% median_hdi
 
 ```
 

@@ -44,7 +44,7 @@ editor_options:
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE)
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE, cache = TRUE)
 ```
 
 # Preparations
@@ -102,7 +102,9 @@ glimpse(fert)
 
 # Exploratory data analysis
 
-Model formula: $$
+Model formula:
+
+$$
 \begin{align}
 y_i &\sim{} \mathcal{N}(\mu_i, \sigma^2)\\
 \mu_i &= \beta_0 + \beta_1 x_i\\
@@ -118,11 +120,158 @@ $$
 
 # Fit the model {.tabset .tabset-faded}
 
+```{r}
+fert_brm <- brm(bf(yield ~ fertilizer),
+                data = fert, 
+                iter = 5000, warmup = 1000, thin = 5, 
+                chains = 3, refresh = 0)
+# save(fert_brm, file = "models/fert_brm.RData")
+# load(file = "models/fert_brm.RData")
+```
+
+What does this all mean?
+
+-   `bf()`: the brms formula, declares the text as a formula. This allows for more versatility in model construction! Note that if there was a family argument, we would put this here.
+-   `iter`: the number of chain steps
+-   `warmup`: the number of links used to adaptively sample the jump distance, prior to taking in samples. Usually use half the size of the number of iterations when it is a generalized model (not gaussian)
+-   `thin`: the thinning interval to avoid autocorrelated samples. Doesn't usually matter as much with the NUT sampler (2 is fine)
+-   `chains`: the number of chains to use (3-4)
+-   `refresh`: tells you how the system is progressing or not
+
+## Exploring the default priors
+
+```{r}
+prior_summary(fert_brm)
+```
+
+What does this mean?
+
+-   class b = regression slopes
+-   fertilizer slope (second row) is a flat/uniform prior (showing up as blank for me), a.k.a. an improper prior, allowing sampling almost anywhere. Effectively no prior, which is similar to a regular model
+-   Model's intercept is a student's t-distribution, which is more of a flat normal distribution, with 3 degrees of flatness, centred at the mean of 161.5 (derived from the median) and with variance = 90.4 (derived from the median absolute deviation or MAD, analogous to a variance for the median). These numbers are calculated from the response variable. We will switch this to a normal distribution and subtract out the mean.
+-   sigma is again a flat student's distribution, centred at zero, but the C++ code cuts off any values of sigma that are negative.
+
+To visualize these priors:
+
+```{r}
+standist::visualize(c("student_t(3,161.5,90.4)"), xlim = c(-10, 1000))
+standist::visualize("student_t(3,161.5,90.4)", "student_t(3,0,90.4)", xlim = c(-10, 1000))
+```
+
+## Setting new priors
+
+One way to explore the power of the priors is to fit a predictive prior distribution without the response variable, based solely on the priors we have set. However, we cannot do this with flat priors, so we will replace this with a flat prior.
+
+Adding to previously, we have two new lines:
+
+```{r}
+fert_brm1 <- brm(bf(yield ~ fertilizer), data = fert, 
+                prior = prior(normal(0,10), class = "b"), # set prior
+                sample_prior = "only", # predictive prior check
+                iter = 5000, warmup = 1000, thin = 5, 
+                chains = 3, refresh = 0)
+```
+
+Now we can visualize the predictive priors.
+
+```{r}
+conditional_effects(fert_brm1) %>% plot(points=T)
+```
+
+This bowtipe-shaped prior is basically saying that the line could be anywhere within the 95% bayesian credibility interval (BCI), which is the grey area, thus could be a very strong negative to very strong positive relationship, to even no relationship (hence why all the points are on the flat line).
+
+For the intercept, something similar, but with a different mean may be useful...
+
+```{r}
+visualize("normal(164,10)")
+
+mean(fert$yield) %>%
+  paste0("normal(0,",.,")") %>%
+  visualize(., xlim = c(-100,300))
+```
+
+...and for the sigma, use gamma!
+
+```{r}
+visualize("gamma(2,1", "gamma(2,0.5", "gamma(2,0.2)", xlim = c(0,20))
+```
+
+Make an object to contain all our priors:
+
+```{r}
+priors <- 
+  prior(normal(164, 10), class = "Intercept") +
+  prior(normal(0, 1), class = "b") + # switched slope to 1, didn't need to be that wide
+  prior(gamma(2,1), class = "sigma")
+```
+
+And refit the model:
+
+```{r}
+fert_brm2 <- brm(bf(yield ~ fertilizer), data = fert, 
+                prior = priors, # set prior
+                sample_prior = "only", # predictive prior check
+                iter = 5000, warmup = 1000, thin = 5, 
+                chains = 3, refresh = 0)
+```
+
+Check predictive prior:
+
+```{r}
+fert_brm2 %>%
+  conditional_effects() %>% 
+  plot(points=TRUE)
+```
+
+Looks good!
+
+Note that within bayesian, the variables are always centred, so that makes our life easier in one way. However, at the end, the package will un-center the intercept(s), which is annoying for interpretation.
+
+## Examining the posterior
+
+Finally, refit the model while sampling priors:
+
+```{r}
+fert_brm3 <- update(fert_brm2, sample_prior = "yes", refresh = 0)
+```
+
+To see everything inside the object:
+
+```{r}
+fert_brm3 %>% tidybayes::get_variables()
+# fert_brm3 %>% as.matrix %>% colnames
+```
+
+Finally, to examine the priors vs. posterior, we can write:
+
+```{r}
+fert_brm3 %>% hypothesis("fertilizer=0") %>% plot()
+fert_brm3 %>% hypothesis("sigma=0", class ='') %>% plot()
+```
+
+## rstan code
+
+To view the rstan raw code specifically, we can see the list of inputs. \$X is the model matrix, with 1 always being the intercept.
+
+```{r}
+standata(fert_brm3)
+```
+
+And stan code:
+
+```{r}
+stancode(fert_brm3)
+```
+
 # MCMC sampling diagnostics {.tabset .tabset-faded}
 
 **MCMC sampling behaviour**
 
 `available_mcmc()`
+
+```{r, include=F, eval=T}
+mod <- fert_brm3
+```
 
 +-----------+-------------------+------------------------+----------------------------------+------------------------------------+
 | Package   | Description       | function               | rstanarm                         | brms                               |
@@ -161,8 +310,69 @@ $$
 +-----------+-------------------+------------------------+----------------------------------+------------------------------------+
 |           | Scale reduction   | `ggs_grb`              | `ggs_grb(ggs(mod))`              | `ggs_grb(ggs(mod))`                |
 +-----------+-------------------+------------------------+----------------------------------+------------------------------------+
-|           |                   |                        |                                  |                                    |
-+-----------+-------------------+------------------------+----------------------------------+------------------------------------+
+
+## Traceplots
+
+```{r}
+mcmc_plot(fert_brm3, type='trace')
+mcmc_plot(fert_brm3, type='combo')
+rstan::stan_trace(fert_brm3$fit)
+ggmcmc::ggs_traceplot(ggs(fert_brm3$fit))
+```
+Note that if you write it without $fit, this includes the warm-up!!
+
+Suggest all chains are well-converged.
+
+## Autocorrelation
+```{r}
+mcmc_plot(fert_brm3, type='acf_bar')
+rstan::stan_ac(fert_brm3$fit)
+ggmcmc::ggs_autocorrelation(ggs(fert_brm3$fit))
+```
+
+## Convergence between chains (Rhat)
+
+```{r}
+mcmc_plot(fert_brm3, type='rhat_hist')
+stan_rhat(fert_brm3$fit)
+ggs_Rhat(ggs(fert_brm3$fit))
+```
+Values less than 1.05 are not cause for concern.
+
+## Effective sample size (ESS)
+
+```{r}
+mcmc_plot(fert_brm3, type='neff_hist')
+stan_ess(fert_brm3$fit)
+ggs_effective(ggs(fert_brm3$fit)) # doesn't work for some reason...
+```
+
+The number of sampling steps that were accepted vs. the total number of samples.
+Values under 0.5 suggests we are rejecting a lot of samples and thus the step size did not set well, likely as a result of especially vague priors.
+
+## Density plots
+```{r}
+mcmc_plot(fert_brm3, type='dens')
+stan_dens(fert_brm3$fit)
+ggs_density(ggs(fert_brm3$fit))
+```
+
+
+## Cross-correlation
+
+```{r}
+ggs_crosscorrelation(ggs(fert_brm3$fit))
+```
+
+Intercept and slope highly correlated draws, consider modelling with a joint MVN distribution to have better estimates.
+
+## Scale reduction
+```{r}
+ggs_grb(ggs(fert_brm3$fit))
+```
+
+
+
 
 # Model validation {.tabset .tabset-faded}
 
@@ -186,7 +396,58 @@ $$
 |           |                   |                              |                                                       |                                                    |
 +-----------+-------------------+------------------------------+-------------------------------------------------------+----------------------------------------------------+
 
+No avoiding tidybayes now!
+
+## Check posteriors
+```{r}
+pp_check(fert_brm3, type = "dens_overlay", nsamples = 100)
+pp_check(fert_brm3, type = "error_scatter_avg") # not as good as DHARMa's plots!
+pp_check(fert_brm3, x = "fertilizer", type = "intervals")
+```
+
+Checking everything in a shiny GUI:
+```{r, eval=F}
+library(shinystan)
+launch_shinystan(fert_brm3)
+```
+
+## DHARMa
+
+To get the simulated residuals, we predict values using the following code:
+```{r}
+preds <- posterior_predict(fert_brm3, nsamples = 250, 
+                           summary = FALSE)
+```
+
+Then combine this with a custom DHARMa function:
+```{r}
+fert_resids <- createDHARMa(
+  simulatedResponse = t(preds),  # simulated predictions/expected values for each observation
+  observedResponse = fert$yield, # true values
+  fittedPredictedResponse = apply(preds, 2, median), # get median expected value for all data points
+  integerResponse = "gaussian") # type of distribution
+
+plot(fert_resids)
+```
+
+This will give us 250 predictions per sample point!
+
+
 # Partial effects plots {.tabset .tabset-faded}
+
+```{r}
+fert_brm3 %>%
+  conditional_effects(nsamples = 200) %>%
+  plot(points = TRUE)
+```
+
+We can also make a spaghetti plot of all the different lines
+```{r}
+fert_brm3 %>%
+  conditional_effects(spaghetti = TRUE, nsamples = 200) %>%
+  plot(points = TRUE)
+```
+
 
 # Model investigation {.tabset .tabset-faded}
 
@@ -217,59 +478,222 @@ where $n$ is the number of MCMC samples and $p$ is the number of parameters to e
 | `median_hdci` | Median and continuous Highest Probability Density Interval |
 |               |                                                            |
 
-# Predictions {.tabset .tabset-faded}
+
+We can now use the individual draws to understand the population!
+```{r}
+fert_brm3 %>% as.matrix() %>% head()
+```
+
+Using `tidy_draws()`
+```{r}
+fert_brm3 %>% tidy_draws()
+```
+
+Use gather_draws() to gather up the data in long format:
+```{r}
+fert_brm3 %>% gather_draws(`b_.*`, regex =T)
+```
+Note that gather_draws uses regex with backwards apostrophes!!
+
+```{r}
+fert_brm3 %>% 
+  gather_draws(`b_.*`, regex =T)
+  median_hdi() # highest probability density intervals
+```
+
+Highest probability density credible intervals is the most used interval, which can move things around based on the bumpiness or asymmetry of the distribution.
+
+```{r}
+fert_brm3 %>% 
+  gather_draws(`b_.*`, regex =T) %>%
+  median_hdci()
+```
+
+However, hdci is the highest and continuous density interval, and will give you the centre, even if the distribution is bimodal. This is the best one to use.
+
 
 # Hypothesis testing {.tabset .tabset-faded}
 
-# Summary figures {.tabset .tabset-faded}
+```{r}
+summary(fert_brm3)
+```
+Gives us an estimate of the intercept, slope, and a number of other statistics, such as upper and lower credibility intervals.. these are different from confidence intervals, since they are different.
 
-## rstanarm {.tabset .tabset-pills}
+Confidence intervals is frequentist, credible intervals are about our belief in the parameter. The difference is, with bayesian, we are 95% sure that the true population intercept for yield is within 36.20 to 69.60. The difference being that frequentists assume there is one true value, bayes assumes there is a distribution of true values. A parameter is considered a 'random' property with its own distribution!
 
-```{r summaryFig1a, results='markdown', eval=TRUE, hidden=TRUE}
-fert_list = with(fert, list(fert = seq(min(fert), max(fert), len=100)))
-newdata = emmeans(fert_rstanarm3, ~fert, at=fert_list) %>% as.data.frame
-head(newdata)
+We are 95% sure that the true slope for fertilizer affecting yield to be between 0.69 and 0.92.
 
-ggplot(newdata, aes(y=emmean, x=fert)) + 
-geom_point(data=fert, aes(y=yield)) +
-geom_line() + 
-geom_ribbon(aes(ymin=lower.HPD, ymax=upper.HPD), fill='blue', alpha=0.3) +
-scale_y_continuous('yield') +
-scale_x_continuous('fert') +
-theme_classic()
-
-## spaghetti plot
-newdata = emmeans(fert_rstanarm3, ~fert, at=fert_list) %>%
-  gather_emmeans_draws()
-newdata %>% head
-ggplot(newdata,  aes(y=.value,  x=fert)) +
-  geom_line(aes(group=.draw),  alpha=0.01) +
-  geom_point(data=fert,  aes(y=yield))
+To get true summary is:
+```{r}
+tidyMCMC(fert_brm3$fit, estimate.method = "median",
+         conf.int = T, conf.method = "HPDinterval",
+         rhat = F, ess = F)
 ```
 
-## brms {.tabset .tabset-pills}
+Note: median_hdci is the same as HPDinterval. 
 
-```{r summaryFig2a, results='markdown', eval=TRUE, hidden=TRUE}
-fert_list = with(fert, list(fert = seq(min(fert), max(fert), len=100)))
-newdata = emmeans(fert_brm3, ~fert, at=fert_list) %>% as.data.frame
-head(newdata)
+HPD interval is difficult to calculate by hand, is based on the kernel density estimate of 95% interval, not the same as the quantile method (which is the default CI, but may be biased when the curve is very bumpy!).
 
-ggplot(newdata, aes(y=emmean, x=fert)) + 
-geom_point(data=fert, aes(y=yield)) +
-geom_line() + 
-geom_ribbon(aes(ymin=lower.HPD, ymax=upper.HPD), fill='blue', alpha=0.3) +
-scale_y_continuous('yield') +
-scale_x_continuous('fert') +
-theme_classic()
+Ignore the rows of the priors, but we can see that the credibility interval does not include zero, therefore there is strong evidence of a positive relationship.
+
+```{r}
+fert_brm3$fit %>% tidy_draws() %>% median_hdci(b_Intercept)
+fert_brm3$fit %>% tidy_draws() %>% median_hdci(sigma)
+# summarise all variables: gather_variables()
+fert_brm3$fit %>% 
+  tidy_draws() %>%
+  gather_variables() %>% # get the specific variables
+  median_hdci(.width = c(0.5, 0.95)) # get HPDinterval
+
+# another way: gather_draws
+fert_brm3$fit %>% 
+  gather_draws(`b_.*|sigma`, regex=T) %>%
+  median_hdci(.width = c(0.5, 0.95)) # get HPDinterval
+```
+
+R-squared:
+```{r}
+fert_brm3 %>% bayes_R2(summary = T) # Bayesian R^2 and quantile CIs
+fert_brm3 %>% bayes_R2(summary = F) %>% median_hdci # posterior samples of R^2 median and HPD interval
+```
+
+R\^2 = 0.92, with CI limits from 0.886-0.927.
+
+# Predictions {.tabset .tabset-faded}
+Let's get the same predictions that we made in the frequentist analysis!
+
+What is the yield at fert = 110?
+
+```{r}
+newdata <- data.frame(fertilizer = 110)
+fert_brm3 %>% emmeans(~fertilizer, at = newdata)
+```
+A yield of about 141 (133-149 95% HPD interval)
+
+
+The same code, but ending with `tidy_draws()` gives us a table of all the individual draws' outputs:
+
+```{r}
+fert_brm3 %>% 
+  emmeans(~fertilizer, at = newdata) %>%
+  tidy_draws()
+```
+
+To calculate the HPDinterval yourself, you can use `median_hdci()`:
+```{r}
+fert_brm3 %>% 
+  emmeans(~fertilizer, at = newdata) %>%
+  tidy_draws() %>%
+  median_hdci(.width = c(0.5, 0.95))
+```
+
+What is the probability if we had a fertilizer concentration of 110, that the yield would be greater than 141? Easy! Use the summary statistics.
+
+What about if it is above 145? Use the HPD interval!
+```{r}
+fert_brm3 %>% 
+  emmeans(~fertilizer, at = newdata) %>%
+  tidy_draws() %>%
+  ggplot(aes(x = `fertilizer 110`)) +
+  geom_histogram() +
+  geom_vline(xintercept = 145, color = "red") +
+  scale_x_continuous(expand = expansion()) +
+  scale_y_continuous(expand = expansion())
+```
+
+```{r}
+fert_brm3 %>% 
+  emmeans(~fertilizer, at = newdata) %>%
+  tidy_draws() %>%
+  summarise(P = sum(`fertilizer 110` > 145) / n())
+```
+P = 18% is higher than 145.
+
+
+If we increased fertilizer from 100 to 200, what sort of increase in yield can we expect?
+```{r}
+newdata = data.frame(fertilizer = c(200, 100))
+# Using pair-wise comparisons
+fert_brm3 %>% 
+  emmeans(pairwise~fertilizer, at = newdata)
+
+# By hand:
+fert_brm3 %>% 
+  emmeans(~fertilizer, at = newdata) %>%
+  tidy_draws() %>%
+  mutate(difference = `fertilizer 200` - `fertilizer 100`) %>%
+  median_hdci(difference)
+  
+```
+
+What about the % difference? Can use by hand method to get this!
+```{r}
+# By hand:
+(fert_mcmc <- fert_brm3 %>% 
+  emmeans(~fertilizer, at = newdata) %>%
+  tidy_draws() %>%
+  janitor::clean_names() %>%
+  mutate(pdiff = (fertilizer_200-fertilizer_100)/fertilizer_100)) %>%
+  median_hdci(pdiff, .width = c(0.5, 0.95))
+fert_mcmc %>%
+  ggplot() +
+  geom_density(aes(x = pdiff))
+```
+The percent difference is that fertilizer of 200 is 0.61 times that of fertilizer = 100 (95% HPD interval = 0.57-0.71 times; 50% HPD interval = 1.57-1.64).
+
+
+What is the probability of the percent difference being greater than 50%?
+```{r}
+fert_mcmc %>%
+  summarise(P = sum(pdiff > 0.50)/n())
+```
+
+How do we show this same result statistically?
+```{r}
+fert_mcmc %>% hypothesis("pdiff > 0.5")
+```
+Evidence ratio = How much evidence is there that the probability is >50 vs. how much evidence is against that? Here, we have 50x more evidence that the probability HAS increased by 50% in the 200-fert treatment, than that it HASN'T!
+
+
+
+# Summary figures {.tabset .tabset-faded}
+
+```{r}
+fert_grid <- with(fert, list(
+  fertilizer = modelr::seq_range(fertilizer, n=100)))
+
+newdata <- fert_brm3 %>% 
+  emmeans(~fertilizer, at = fert_grid) %>% 
+  as.data.frame() %>%
+  rename(yield = emmean, lwr = lower.HPD, upr = upper.HPD)
+
+newdata %>%
+  ggplot(aes(y = yield, x = fertilizer)) + 
+  geom_ribbon(aes(ymin = lwr, ymax = upr), 
+              fill='blue', alpha=0.3) +
+  geom_line() +
+  geom_point(data=fert) +
+  scale_y_continuous('Yield') +
+  scale_x_continuous('Fertilizer') +
+  scale_x_continuous(expand = expansion()) +
+  scale_y_continuous(expand = expansion())
 
 ## spaghetti plot
-newdata = emmeans(fert_brm3, ~fert, at=fert_list) %>%
-  gather_emmeans_draws()
-newdata %>% head
-ggplot(newdata,  aes(y=.value,  x=fert)) +
-  geom_line(aes(group=.draw),  alpha=0.01) +
-  geom_point(data=fert,  aes(y=yield))
-  
+newdata2 <- emmeans(fert_brm3, ~fertilizer, at=fert_grid) %>%
+  gather_emmeans_draws() %>%
+  ungroup() %>%
+  rename(yield = .value)
+
+newdata2 %>%
+  ggplot(aes(y = yield, x = fertilizer)) +
+  geom_line(aes(group = .draw), col = "blue", alpha = 0.01) +
+  geom_line(data = newdata, col = "white") +
+  geom_point(data = fert) +
+  scale_y_continuous('Yield') +
+  scale_x_continuous('Fertilizer') +
+  scale_x_continuous(expand = expansion()) +
+  scale_y_continuous(expand = expansion())
+
 ```
 
 # References

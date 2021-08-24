@@ -77,7 +77,7 @@ theme_set(theme_classic()) #put the default ggplot theme back
 
 Format of polis.csv data file
 
-ISLAND       RATIO   PA
+island       ratio   pa
 ------------ ------- ----
 Bota         15.41   1
 Cabeza       5.63    1
@@ -86,9 +86,9 @@ Coronadito   15.17   0
 ..           ..      ..
 
 ------------ -----------------------------------------------------------------------------------------
-**ISLAND**   Categorical listing of the name of the 19 islands used - variable not used in analysis.
-**RATIO**    Ratio of perimeter to area of the island.
-**PA**       Presence (1) or absence (0) of *Uta* lizards on island.
+**island**   Categorical listing of the name of the 19 islands used - variable not used in analysis.
+**ratio**    Ratio of perimeter to area of the island.
+**pa**       Presence (1) or absence (0) of *Uta* lizards on island.
 ------------ -----------------------------------------------------------------------------------------
 
 
@@ -102,11 +102,10 @@ The aim of the analysis is to investigate the relationship between island parime
 polis <- read_csv('../data/polis.csv', trim_ws=TRUE) %>%
   janitor::clean_names()
 glimpse(polis)
-head(polis)
-str(polis)
 ```
 
 # Exploratory data analysis
+
 
 
 Model formula:
@@ -122,25 +121,148 @@ $$
 
 # Fit the model {.tabset .tabset-faded}
 
+```{r}
+priors <- 
+  prior(normal(0,10), class = "Intercept") +
+  prior(normal(0,1), class = "b")
+polis_brm1 <- brm(bf(pa|trials(1) ~ ratio, family = binomial()),
+                  data = polis, 
+                  prior = priors,
+                  sample_prior = "only", # predictive prior distribution
+                  iter = 5000, warmup = 1000, chains = 3, thin = 5, refresh = 0)
+```
+Note that for a binomial, you have to indicate the total number of trials (trials is a specific reserved word in this function!). Here, we just write trials(1) for the Bernoulli trials seen here (either presence or absence, rather than counts)
+
+```{r}
+conditional_effects(polis_brm1) %>% plot(points = TRUE)
+```
+
+This shows us that our priors are not strong at all, in fact, they may actually be too weak!
+
+We will skip a few models ahead of last time to fit the final model we saw last time...
+```{r}
+polis_brm3 <- brm(bf(pa|trials(1) ~ ratio, family = binomial()),
+                  data = polis, 
+                  prior = priors,
+                  sample_prior = "yes", # predictive prior distribution
+                  iter = 5000, warmup = 1000, chains = 3, thin = 5, refresh = 0)
+```
+
+```{r}
+polis_brm3$fit %>% get_variables()
+polis_brm3 %>% hypothesis("ratio = 0") %>% plot()
+```
+Can see that the prior has not affected the posterior distribution, and thus were uninformative.
+
 
 # MCMC sampling diagnostics {.tabset .tabset-faded}
 
+```{r}
+mcmc_plot(polis_brm3, type='combo') # good mixing of chains
+mcmc_plot(polis_brm3, type='acf_bar') # No autocorrelation
+mcmc_plot(polis_brm3, type='rhat_hist') # Rhat less than 1.05
+mcmc_plot(polis_brm3, type='neff_hist') # Neff greater than 0.5 or 50%
+ggs_crosscorrelation(ggs(polis_brm3$fit)) # no unexpected cross-correlation
+ggs_grb(ggs(polis_brm3$fit)) # scale reduction
+```
 
 
 # Model validation {.tabset .tabset-faded}
 
+```{r}
+pp_check(polis_brm3, type = "dens_overlay", nsamples = 100)
+pp_check(polis_brm3, x = "ratio", type = "intervals")
+```
+
+DHARMa residuals:
+```{r}
+preds <- posterior_predict(polis_brm3, nsamples = 250, 
+                           summary = FALSE)
+polis_resids <- createDHARMa(
+  simulatedResponse = t(preds),  # simulated predictions/expected values for each observation
+  observedResponse = polis$pa, # true values
+  fittedPredictedResponse = apply(preds, 2, median), # get median expected value for all data points
+  integerResponse = TRUE) # type of distribution
+
+plot(polis_resids)
+```
+
 
 # Partial effects plots {.tabset .tabset-faded}
-
+```{r}
+polis_brm3 %>%
+  conditional_effects() %>%
+  plot(points = TRUE)
+```
 
 
 # Model investigation {.tabset .tabset-faded}
+```{r}
+summary(polis_brm3)
+
+(x <-tidyMCMC(polis_brm3$fit, estimate.method = "median",
+         conf.int = T, conf.method = "HPDinterval",
+         rhat = F, ess = F) %>% as.data.frame)
+```
+`r exp(x[1,2])` times as likely to be present rather than absent
+`r plogis(x[1,2])*100` % present vs. absent
+`r plogis(x[1,2] + x[2,2])*100` % present vs. absent when ratio increases by 1 unit
+
+Bayes R^2:
+```{r}
+polis_brm3 %>%
+  bayes_R2(summary = FALSE) %>%
+  median_hdci()
+```
 
 
 # Further analyses {.tabset .tabset-faded}
 
+What is the LD50?
+
+LD50 = -Intercept/slope
+
+```{r}
+polis_brm3$fit %>% get_variables
+
+LD50s <- polis_brm3$fit %>% 
+  tidy_draws() %>%
+  mutate(LD50 = -b_Intercept/b_ratio)
+LD50_hpd <- LD50s %>% median_hdci(LD50) %>% janitor::clean_names()
+  
+LD50s %>%
+  ggplot() +
+  geom_histogram(aes(x = LD50)) +
+  geom_vline(xintercept = c(LD50_hpd$lower,LD50_hpd$upper), 
+             color = "red", linetype = "dashed") +
+  geom_vline(xintercept = c(LD50_hpd$ld50), 
+             color = "red") +
+  scale_y_continuous(expand = expansion())
+```
+
 
 # Summary figure {.tabset .tabset-faded}
+
+```{r}
+polis_grid <- with(polis, list(ratio = modelr::seq_range(ratio, n=100)))
+
+newdata <- polis_brm3 %>% 
+  emmeans(~ratio, at = polis_grid, type = "response") %>%
+  as.data.frame() %>%
+  rename(pa = prob, lwr = lower.HPD, upr = upper.HPD)
+
+newdata %>% 
+  ggplot(aes(x = ratio, y = pa)) +
+  geom_ribbon(aes(ymin = lwr, ymax = upr), fill = "blue", alpha = 0.3) +
+  geom_line() + 
+  geom_point(data = polis) +
+  labs(x = "Island ratio", y = "Presence vs. absence") +
+  geom_vline(xintercept = c(LD50_hpd$lower,LD50_hpd$upper), 
+             color = "red", linetype = "dashed") +
+  geom_vline(xintercept = c(LD50_hpd$ld50), 
+             color = "red") +
+  scale_x_continuous(expand = expansion())
+```
 
 
 # References

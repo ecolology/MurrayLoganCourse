@@ -1,5 +1,5 @@
 ---
-title: "GLMM example 6"
+title: "Bayesian GLMM Part 6"
 author: "Murray Logan"
 date: "`r format(Sys.time(), '%d %B, %Y')`"
 output:
@@ -39,6 +39,8 @@ mathfont: LiberationMono
 monofont: DejaVu Sans Mono
 classoption: a4paper
 bibliography: ../resources/references.bib
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r setup, include=FALSE, warnings=FALSE, message=FALSE}
@@ -51,6 +53,7 @@ Load the necessary libraries
 
 ```{r libraries, results='markdown', eval=TRUE, message=FALSE, warning=FALSE}
 library(tidyverse) #for data wrangling
+theme_set(theme_classic())
 ```
 
 # Scenario
@@ -89,21 +92,22 @@ from the center of the plate.
 
 Format of copper.csv data file
 
-COPPER   PLATE   DIST   WORMS   AREA   COUNT
+copper   plate   dist   worms   area   count
 -------- ------- ------ ------- ------ -------
 ..       ..      ..     ..      ..     ..
 
 ------------ -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-**COPPER**   Categorical listing of the copper treatment (control = no copper applied, week 2 = copper treatment applied in second week and week 1= copper treatment applied in first week) applied to whole plates. Factor A (between plot factor).
-**PLATE**    Substrate provided for polychaete worm colonization on which copper treatment applied. These are the plots (Factor B). Numbers in this column represent numerical labels given to each plate.
-**DIST**     Categorical listing for the four concentric distances from the center of the plate (source of copper treatment) with 1 being the closest and 4 the furthest. Factor C (within plot factor)
-**WORMS**    Density (\#/cm~2~) of worms measured. Response variable.
+**copper**   Categorical listing of the copper treatment (control = no copper applied, week 2 = copper treatment applied in second week and week 1= copper treatment applied in first week) applied to whole plates. Factor A (between plot factor).
+**plate**    Substrate provided for polychaete worm colonization on which copper treatment applied. These are the plots (Factor B). Numbers in this column represent numerical labels given to each plate.
+**dist**     Categorical listing for the four concentric distances from the center of the plate (source of copper treatment) with 1 being the closest and 4 the furthest. Factor C (within plot factor)
+**worms**    Density (\#/cm~2~) of worms measured. Response variable.
 ------------ -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 # Read in the data
 
 ```{r readData, results='markdown', eval=TRUE}
-copper = read_csv('../data/copper.csv', trim_ws=TRUE)
+copper <- read_csv('../data/copper.csv', trim_ws=TRUE) %>%
+  janitor::clean_names()
 glimpse(copper)
 ```
 

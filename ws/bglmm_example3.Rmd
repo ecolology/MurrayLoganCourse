@@ -1,5 +1,5 @@
 ---
-title: "GLMM example 3"
+title: "Bayesian GLMM Part 3"
 author: "Murray Logan"
 date: "`r format(Sys.time(), '%d %B, %Y')`"
 output:
@@ -39,6 +39,8 @@ mathfont: LiberationMono
 monofont: DejaVu Sans Mono
 classoption: a4paper
 bibliography: ../resources/references.bib
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r setup, include=FALSE, warnings=FALSE, message=FALSE}
@@ -57,9 +59,10 @@ library(sjPlot)    #for outputs
 library(knitr)     #for kable
 library(effects)   #for partial effects plots
 library(emmeans)   #for estimating marginal means
-library(MASS)      #for glm.nb
+library(mass)      #for glm.nb
 library(MuMIn)     #for AICc
 library(tidyverse) #for data wrangling
+theme_set(theme_classic())
 ```
 
 # Scenario
@@ -68,7 +71,7 @@ library(tidyverse) #for data wrangling
 
 Format of starling\_full.RSV data files
 
-SITUATION   MONTH   MASS   BIRD
+situation   month   mass   bird
 ----------- ------- ------ -----------
 tree        Nov     78     tree1
 ..          ..      ..     ..
@@ -82,17 +85,18 @@ tree        Jan     85     tree1
 ..          ..      ..     ..
 
 --------------- ------------------------------------------------------------------------------
-**SITUATION**   Categorical listing of roosting situations (tree, nest-box, inside or other)
-**MONTH**       Categorical listing of the month of sampling.
-**MASS**        Mass (g) of starlings.
-**BIRD**        Categorical listing of individual bird repeatedly sampled.
+**situation**   Categorical listing of roosting situations (tree, nest-box, inside or other)
+**month**       Categorical listing of the month of sampling.
+**mass**        Mass (g) of starlings.
+**bird**        Categorical listing of individual bird repeatedly sampled.
 --------------- ------------------------------------------------------------------------------
 
 
 # Read in the data
 
 ```{r readData, results='markdown', eval=TRUE}
-starling = read_csv('../data/starling_full.csv', trim_ws=TRUE)
+starling <- read_csv('../data/starling_full.csv', trim_ws=TRUE) %>%
+  janitor::clean_names()
 glimpse(starling)
 ```
 
@@ -117,101 +121,101 @@ $\bf{Z}$ represents a cell means model matrix for the random intercepts associat
 # Fit the model
 
 ```{r fitModel, results='markdown', eval=FALSE,hidden=TRUE}
-ggplot(starling, aes(y=MASS, x=MONTH, group=BIRD)) +
+ggplot(starling, aes(y=mass, x=month, group=bird)) +
     geom_point() +
     geom_line() +
-    facet_grid(~SITUATION) 
+    facet_grid(~situation) 
 
-starling.rstan = stan_glmer(MASS ~ MONTH*SITUATION+(1|BIRD),data=starling,
+starling_rstan = stan_glmer(mass ~ month*situation+(1|bird),data=starling,
                             iter=5000, warmup=2000, thin=5, chains=3, refresh=0)
-prior_summary(starling.rstan)
+prior_summary(starling_rstan)
 
-starling.rstan %>% get_variables()
-plot(starling.rstan,  'mcmc_trace', regex_pars = '^.Intercept|^SITUATION|^MONTH|[sS]igma')
-plot(starling.rstan,  'mcmc_acf_bar', regex_pars = '^.Intercept|^SITUATION|^MONTH|[sS]igma')
-plot(starling.rstan,  'mcmc_rhat_hist', regex_pars = '^.Intercept|^SITUATION|^MONTH|[sS]igma')
-plot(starling.rstan,  'mcmc_neff_hist', regex_pars = '^.Intercept|^SITUATION|^MONTH|[sS]igma')
+starling_rstan %>% get_variables()
+plot(starling_rstan,  'mcmc_trace', regex_pars = '^.Intercept|^situation|^month|[sS]igma')
+plot(starling_rstan,  'mcmc_acf_bar', regex_pars = '^.Intercept|^situation|^month|[sS]igma')
+plot(starling_rstan,  'mcmc_rhat_hist', regex_pars = '^.Intercept|^situation|^month|[sS]igma')
+plot(starling_rstan,  'mcmc_neff_hist', regex_pars = '^.Intercept|^situation|^month|[sS]igma')
 
 
-preds <- posterior_predict(starling.rstan,  nsamples=250,  summary=FALSE)
-starling.resids <- createDHARMa(simulatedResponse = t(preds),
-                            observedResponse = starling$MASS,
+preds <- posterior_predict(starling_rstan,  nsamples=250,  summary=FALSE)
+starling_resids <- createDHARMa(simulatedResponse = t(preds),
+                            observedResponse = starling$mass,
                             fittedPredictedResponse = apply(preds, 2, median))
-plot(starling.resids)
+plot(starling_resids)
 
 
-starling.rstan1 = stan_glmer(MASS ~ MONTH*SITUATION+(MONTH|BIRD),data=starling,
+starling_rstan1 = stan_glmer(mass ~ month*situation+(month|bird),data=starling,
                             iter=5000, warmup=2000, thin=5, chains=3, refresh=0)
-starling.rstan1 = stan_glmer(MASS ~ MONTH*SITUATION+(MONTH|BIRD),data=starling,
+starling_rstan1 = stan_glmer(mass ~ month*situation+(month|bird),data=starling,
                              iter=5000, warmup=2000, thin=5, chains=3, refresh=0,
                              adapt_delta = 0.99)
-#pairs(starling.rstan1,  pars=c('(Intercept)', 'MONTHNov'))
-starling.rstan1 %>% get_variables()
-pairs(starling.rstan1,  regex_pars=c('SITUATION', 'sigma'))
-prior_summary(starling.rstan1)
+#pairs(starling_rstan1,  pars=c('(Intercept)', 'MONTHNov'))
+starling_rstan1 %>% get_variables()
+pairs(starling_rstan1,  regex_pars=c('situation', 'sigma'))
+prior_summary(starling_rstan1)
 
-plot(starling.rstan1,  'mcmc_trace', regex_pars = '^.Intercept|^SITUATION|^MONTH|[sS]igma')
-plot(starling.rstan1,  'mcmc_acf_bar', regex_pars = '^.Intercept|^SITUATION|^MONTH|[sS]igma')
-plot(starling.rstan1,  'mcmc_rhat_hist', regex_pars = '^.Intercept|^SITUATION|^MONTH|[sS]igma')
-plot(starling.rstan1,  'mcmc_neff_hist', regex_pars = '^.Intercept|^SITUATION|^MONTH|[sS]igma')
+plot(starling_rstan1,  'mcmc_trace', regex_pars = '^.Intercept|^situation|^month|[sS]igma')
+plot(starling_rstan1,  'mcmc_acf_bar', regex_pars = '^.Intercept|^situation|^month|[sS]igma')
+plot(starling_rstan1,  'mcmc_rhat_hist', regex_pars = '^.Intercept|^situation|^month|[sS]igma')
+plot(starling_rstan1,  'mcmc_neff_hist', regex_pars = '^.Intercept|^situation|^month|[sS]igma')
 
-starling.rstan1 = stan_glmer(MASS ~ MONTH*SITUATION+(MONTH|BIRD),data=starling,
+starling_rstan1 = stan_glmer(mass ~ month*situation+(month|bird),data=starling,
                              iter=10000, warmup=5000, thin=15, chains=3, refresh=0,
                              adapt_delta = 0.99)
 
-plot(starling.rstan1,  'mcmc_trace', regex_pars = '^.Intercept|^SITUATION|^MONTH|[sS]igma')
-plot(starling.rstan1,  'mcmc_acf_bar', regex_pars = '^.Intercept|^SITUATION|^MONTH|[sS]igma')
-plot(starling.rstan1,  'mcmc_rhat_hist', regex_pars = '^.Intercept|^SITUATION|^MONTH|[sS]igma')
-plot(starling.rstan1,  'mcmc_neff_hist', regex_pars = '^.Intercept|^SITUATION|^MONTH|[sS]igma')
-preds <- posterior_predict(starling.rstan1,  nsamples=250,  summary=FALSE)
-starling.resids <- createDHARMa(simulatedResponse = t(preds),
-                            observedResponse = starling$MASS,
+plot(starling_rstan1,  'mcmc_trace', regex_pars = '^.Intercept|^situation|^month|[sS]igma')
+plot(starling_rstan1,  'mcmc_acf_bar', regex_pars = '^.Intercept|^situation|^month|[sS]igma')
+plot(starling_rstan1,  'mcmc_rhat_hist', regex_pars = '^.Intercept|^situation|^month|[sS]igma')
+plot(starling_rstan1,  'mcmc_neff_hist', regex_pars = '^.Intercept|^situation|^month|[sS]igma')
+preds <- posterior_predict(starling_rstan1,  nsamples=250,  summary=FALSE)
+starling_resids <- createDHARMa(simulatedResponse = t(preds),
+                            observedResponse = starling$mass,
                             fittedPredictedResponse = apply(preds, 2, median))
-plot(starling.resids)
+plot(starling_resids)
 
-(l.1 <- loo(starling.rstan))
-(l.2 <- loo(starling.rstan1))
+(l.1 <- loo(starling_rstan))
+(l.2 <- loo(starling_rstan1))
 loo_compare(l.1, l.2)
 
-as.matrix(starling.rstan) %>% colnames
-posterior_vs_prior(starling.rstan1, color_by='vs', group_by=TRUE, regex_pars=c('^MONTH','^SITUATION','^[sS]igma'), 
+as.matrix(starling_rstan) %>% colnames
+posterior_vs_prior(starling_rstan1, color_by='vs', group_by=TRUE, regex_pars=c('^month','^situation','^[sS]igma'), 
                    facet_args=list(scales='free_y'))
 
 
-g=ggpredict(starling.rstan1) %>% plot
+g=ggpredict(starling_rstan1) %>% plot
 do.call('grid.arrange',  g)
-ggemmeans(starling.rstan1, ~SITUATION|MONTH) %>% plot
+ggemmeans(starling_rstan1, ~situation|month) %>% plot
 
-summary(starling.rstan1)
+summary(starling_rstan1)
 
-nms <- starling.rstan1 %>% get_variables()
+nms <- starling_rstan1 %>% get_variables()
 nms
-wch <- grep('^.Intercept|^MONTH|^SITUATION|[sS]igma', nms)
-tidyMCMC(starling.rstan1$stanfit,conf.int=TRUE, conf.method='HPDinterval',
+wch <- grep('^.Intercept|^month|^situation|[sS]igma', nms)
+tidyMCMC(starling_rstan1$stanfit,conf.int=TRUE, conf.method='HPDinterval',
          rhat=TRUE, ess=TRUE, pars=nms[wch])
 
-emmeans(starling.rstan1, pairwise~MONTH|SITUATION)
-starling.em = emmeans(starling.rstan1, ~MONTH|SITUATION) %>%
-    gather_emmeans_draws() %>% spread(key=MONTH, value=.value) %>%
+emmeans(starling_rstan1, pairwise~month|situation)
+starling_em = emmeans(starling_rstan1, ~month|situation) %>%
+    gather_emmeans_draws() %>% spread(key=month, value=.value) %>%
     mutate(Eff=Jan-Nov,
            PEff=100*(Jan-Nov)/Nov)
-starling.em %>% head
+starling_em %>% head
 
-starling.em %>% ungroup %>%
-    dplyr::select(SITUATION,Eff,PEff) %>% group_by(SITUATION) %>% median_hdi
+starling_em %>% ungroup %>%
+    dplyr::select(situation,Eff,PEff) %>% group_by(situation) %>% median_hdi
 
-starling.em %>% ungroup %>%
-    dplyr::select(SITUATION,Eff,PEff) %>% group_by(SITUATION) %>%
+starling_em %>% ungroup %>%
+    dplyr::select(situation,Eff,PEff) %>% group_by(situation) %>%
     summarize(Prob=sum(PEff>10)/n())
 
-bayes_R2(starling.rstan1, re.form=NA) %>% median_hdi
-bayes_R2(starling.rstan1, re.form=~(1|BIRD)) %>% median_hdi
-bayes_R2(starling.rstan1, re.form=~(MONTH|BIRD)) %>% median_hdi
+bayes_R2(starling_rstan1, re.form=NA) %>% median_hdi
+bayes_R2(starling_rstan1, re.form=~(1|bird)) %>% median_hdi
+bayes_R2(starling_rstan1, re.form=~(month|bird)) %>% median_hdi
 
-newdata = emmeans(starling.rstan1, ~MONTH|SITUATION) %>% as.data.frame
+newdata = emmeans(starling_rstan1, ~month|situation) %>% as.data.frame
 head(newdata)
-ggplot(newdata, aes(y=emmean, x=SITUATION)) +
-    geom_pointrange(aes(ymin=lower.HPD, ymax=upper.HPD, fill=MONTH),
+ggplot(newdata, aes(y=emmean, x=situation)) +
+    geom_pointrange(aes(ymin=lower.HPD, ymax=upper.HPD, fill=month),
                     position=position_dodge(width=0.3), shape=21)
 ```
 
@@ -219,129 +223,129 @@ ggplot(newdata, aes(y=emmean, x=SITUATION)) +
 
 ```{r fitModel.brms, results='markdown', eval=FALSE,hidden=TRUE}
 starling = starling %>%
-  mutate(SITUATION=factor(SITUATION),
-         MONTH=factor(MONTH),
-         BIRD=factor(BIRD))
+  mutate(situation=factor(situation),
+         month=factor(month),
+         bird=factor(bird))
 
-ggplot(starling,  aes(y=MASS,  x=SITUATION,  color=MONTH)) +
+ggplot(starling,  aes(y=mass,  x=situation,  color=month)) +
   geom_boxplot()
 
 
-ggplot(starling, aes(y=MASS, x=as.numeric(MONTH), group=BIRD)) +
+ggplot(starling, aes(y=mass, x=as.numeric(month), group=bird)) +
     geom_point() +
     geom_line() +
-    facet_grid(~SITUATION) 
+    facet_grid(~situation) 
 
-ggplot(starling, aes(y=MASS, x=SITUATION,  color=MONTH)) +
+ggplot(starling, aes(y=mass, x=situation,  color=month)) +
     geom_point() +
     geom_line() +
-    facet_grid(~BIRD) 
+    facet_grid(~bird) 
 
 
 
 
-starling.form <- bf(MASS ~ MONTH*SITUATION+(1|BIRD),
+starling_form <- bf(mass ~ month*situation+(1|bird),
                     family=gaussian())
-starling.brms <- brm(starling.form, data=starling, 
+starling_brms <- brm(starling_form, data=starling, 
                      iter=5000, warmup=2000, thin=5, chains=3, refresh=0,
                      cores=3)
-prior_summary(starling.brms)
+prior_summary(starling_brms)
 
-nms <- starling.brms %>% get_variables()
+nms <- starling_brms %>% get_variables()
 
-mcmc_plot(starling.brms,  type='trace', regex_pars = '^b.Intercept|^b.SITUATION|^b.MONTH|[sS]igma|sd')
-mcmc_plot(starling.brms,  type='acf_bar', regex_pars = '^.Intercept|^SITUATION|^MONTH|[sS]igma')
-mcmc_plot(starling.brms,  type='rhat_hist', regex_pars = '^.Intercept|^SITUATION|^MONTH|[sS]igma')
-mcmc_plot(starling.brms,  type='neff_hist', regex_pars = '^.Intercept|^SITUATION|^MONTH|[sS]igma')
+mcmc_plot(starling_brms,  type='trace', regex_pars = '^b.Intercept|^b.situation|^b.month|[sS]igma|sd')
+mcmc_plot(starling_brms,  type='acf_bar', regex_pars = '^.Intercept|^situation|^month|[sS]igma')
+mcmc_plot(starling_brms,  type='rhat_hist', regex_pars = '^.Intercept|^situation|^month|[sS]igma')
+mcmc_plot(starling_brms,  type='neff_hist', regex_pars = '^.Intercept|^situation|^month|[sS]igma')
 
 
-preds <- posterior_predict(starling.brms,  nsamples=250,  summary=FALSE)
-starling.resids <- createDHARMa(simulatedResponse = t(preds),
-                            observedResponse = starling$MASS,
+preds <- posterior_predict(starling_brms,  nsamples=250,  summary=FALSE)
+starling_resids <- createDHARMa(simulatedResponse = t(preds),
+                            observedResponse = starling$mass,
                             fittedPredictedResponse = apply(preds, 2, median),
                             integerResponse=TRUE)
-plot(starling.resids)
+plot(starling_resids)
 
-starling.form <- bf(MASS ~ MONTH*SITUATION+(MONTH|BIRD),
+starling_form <- bf(mass ~ month*situation+(month|bird),
                     family=gaussian())
-starling.brms1 <- brm(starling.form, data=starling, 
+starling_brms1 <- brm(starling_form, data=starling, 
                      iter=5000, warmup=2000, thin=10, chains=3, refresh=0,
                      cores=3,  control=list(adapt_delta=0.99))
-prior_summary(starling.brms1)
+prior_summary(starling_brms1)
 
-starling.brms1 %>% get_variables()
-mcmc_plot(starling.brms1,  type='trace', regex_pars = '^b.Intercept|^b.SITUATION|^b.MONTH|[sS]igma')
-mcmc_plot(starling.brms1,  type='acf_bar', regex_pars = '^b.Intercept|^b.SITUATION|^b.MONTH|[sS]igma')
-mcmc_plot(starling.brms1,  type='rhat_hist')
-mcmc_plot(starling.brms1,  type='neff_hist')
+starling_brms1 %>% get_variables()
+mcmc_plot(starling_brms1,  type='trace', regex_pars = '^b.Intercept|^b.situation|^b.month|[sS]igma')
+mcmc_plot(starling_brms1,  type='acf_bar', regex_pars = '^b.Intercept|^b.situation|^b.month|[sS]igma')
+mcmc_plot(starling_brms1,  type='rhat_hist')
+mcmc_plot(starling_brms1,  type='neff_hist')
 
 
-preds <- posterior_predict(starling.brms1,  nsamples=250,  summary=FALSE)
-starling.resids <- createDHARMa(simulatedResponse = t(preds),
-                            observedResponse = starling$MASS,
+preds <- posterior_predict(starling_brms1,  nsamples=250,  summary=FALSE)
+starling_resids <- createDHARMa(simulatedResponse = t(preds),
+                            observedResponse = starling$mass,
                             fittedPredictedResponse = apply(preds, 2, median))
-plot(starling.resids)
-#pairs(starling.rstan1,  pars=c('(Intercept)', 'MONTHNov'))
-starling.rstan1 %>% get_variables()
-pairs(starling.brms1,  regex_pars=c('SITUATION', 'sigma'))
+plot(starling_resids)
+#pairs(starling_rstan1,  pars=c('(Intercept)', 'MONTHNov'))
+starling_rstan1 %>% get_variables()
+pairs(starling_brms1,  regex_pars=c('situation', 'sigma'))
 
-(l.1 <- loo(starling.brms))
-(l.2 <- loo(starling.brms1))
+(l.1 <- loo(starling_brms))
+(l.2 <- loo(starling_brms1))
 loo_compare(l.1, l.2)
 
-as.matrix(starling.brms) %>% colnames
-posterior_vs_prior(starling.rstan1, color_by='vs', group_by=TRUE, regex_pars=c('^MONTH','^SITUATION','^[sS]igma'), 
+as.matrix(starling_brms) %>% colnames
+posterior_vs_prior(starling_rstan1, color_by='vs', group_by=TRUE, regex_pars=c('^month','^situation','^[sS]igma'), 
                    facet_args=list(scales='free_y'))
 
 
 
-g=ggpredict(starling.brms) %>% plot
+g=ggpredict(starling_brms) %>% plot
 length(g)
 g[[1]] + g[[2]]
 do.call('grid.arrange',  g)
 
-ggemmeans(starling.brms, ~SITUATION|MONTH) %>% plot
-mcmc_plot(starling.brms1,  type='interval', regex_pars = '^.Intercept|^SITUATION|^MONTH')
-summary(starling.brms1)
+ggemmeans(starling_brms, ~situation|month) %>% plot
+mcmc_plot(starling_brms1,  type='interval', regex_pars = '^.Intercept|^situation|^month')
+summary(starling_brms1)
 
-nms <- starling.brms %>% get_variables()
+nms <- starling_brms %>% get_variables()
 nms
-wch <- grep('^b.Intercept|^b.MONTH|^b.SITUATION|sigma|sd', nms)
-tidyMCMC(starling.brms$fit,conf.int=TRUE, conf.method='HPDinterval',
+wch <- grep('^b.Intercept|^b.month|^b.situation|sigma|sd', nms)
+tidyMCMC(starling_brms$fit,conf.int=TRUE, conf.method='HPDinterval',
          rhat=TRUE, ess=TRUE, pars=nms[wch])
 
-emmeans(starling.brms1, pairwise~MONTH|SITUATION)
+emmeans(starling_brms1, pairwise~month|situation)
 
-starling.em = emmeans(starling.brms, ~MONTH|SITUATION) %>%
+starling_em = emmeans(starling_brms, ~month|situation) %>%
   gather_emmeans_draws() %>%
-  spread(key=MONTH, value=.value) %>%
+  spread(key=month, value=.value) %>%
     mutate(Eff=Jan-Nov,
            PEff=100*(Jan-Nov)/Nov)
-starling.em %>% head
+starling_em %>% head
 
-starling.em %>% ungroup %>%
-  dplyr::select(SITUATION,Eff,PEff) %>%
-  group_by(SITUATION) %>%
+starling_em %>% ungroup %>%
+  dplyr::select(situation,Eff,PEff) %>%
+  group_by(situation) %>%
   median_hdi
 
-starling.em %>% ungroup %>%
-  dplyr::select(SITUATION,Eff,PEff) %>%
-  group_by(SITUATION) %>%
+starling_em %>% ungroup %>%
+  dplyr::select(situation,Eff,PEff) %>%
+  group_by(situation) %>%
     summarize(Prob=sum(PEff>10)/n())
 
 
 cmat <- cbind(Comp1=c(0.5, 0.5, -1, 0),
               Comp2=c(1, -0.5, -0.5, 0))
-emmeans(starling.brms1,  ~SITUATION|MONTH,  contr=list(SITUATION=cmat))
+emmeans(starling_brms1,  ~situation|month,  contr=list(situation=cmat))
 
-bayes_R2(starling.brms1, re.form=NA) %>% median_hdi
-bayes_R2(starling.brms1, re.form=~(1|BIRD)) %>% median_hdi
-bayes_R2(starling.brms1, re.form=~(MONTH|BIRD)) %>% median_hdi
+bayes_R2(starling_brms1, re.form=NA) %>% median_hdi
+bayes_R2(starling_brms1, re.form=~(1|bird)) %>% median_hdi
+bayes_R2(starling_brms1, re.form=~(month|bird)) %>% median_hdi
 
-newdata = emmeans(starling.brms1, ~MONTH|SITUATION) %>% as.data.frame
+newdata = emmeans(starling_brms1, ~month|situation) %>% as.data.frame
 head(newdata)
-ggplot(newdata, aes(y=emmean, x=SITUATION)) +
-    geom_pointrange(aes(ymin=lower.HPD, ymax=upper.HPD, fill=MONTH),
+ggplot(newdata, aes(y=emmean, x=situation)) +
+    geom_pointrange(aes(ymin=lower.HPD, ymax=upper.HPD, fill=month),
                     position=position_dodge(width=0.3), shape=21)
 ```
 

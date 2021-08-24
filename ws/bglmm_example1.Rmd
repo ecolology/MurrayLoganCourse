@@ -1,5 +1,5 @@
 ---
-title: "Bayesian GLMM Part1"
+title: "Bayesian GLMM Part 1"
 author: "Murray Logan"
 date: "`r format(Sys.time(), '%d %B, %Y')`"
 output:
@@ -39,6 +39,8 @@ mathfont: LiberationMono
 monofont: DejaVu Sans Mono
 classoption: a4paper
 bibliography: ../resources/references.bib
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r setup, include=FALSE, warnings=FALSE, message=FALSE}
@@ -63,6 +65,7 @@ library(tidybayes)  #for more tidying outputs
 library(ggeffects)  #for partial plots
 library(broom.mixed)
 library(tidyverse)  #for data wrangling etc
+theme_set(theme_classic())
 ```
 
 # Scenario
@@ -73,7 +76,7 @@ A plant pathologist wanted to examine the effects of two different strengths of 
 
 Format of tobacco.csv data files
 
-LEAF   TREAT    NUMBER
+leaf   treat    number
 ------ -------- --------
 1      Strong   35.898
 1      Week     25.02
@@ -84,16 +87,18 @@ LEAF   TREAT    NUMBER
 \...   \...     \...
 
 ------------ ----------------------------------------------------------------------------------------------------
-**LEAF**     The blocking factor - Factor B
-**TREAT**    Categorical representation of the strength of the tobacco virus - main factor of interest Factor A
-**NUMBER**   Number of lesions on that part of the tobacco leaf - response variable
+**leaf**     The blocking factor - Factor B
+**treat**    Categorical representation of the strength of the tobacco virus - main factor of interest Factor A
+**number**   Number of lesions on that part of the tobacco leaf - response variable
 ------------ ----------------------------------------------------------------------------------------------------
 
 
 # Read in the data
 
 ```{r readData, results='markdown', eval=TRUE}
-tobacco = read_csv('../data/tobacco.csv', trim_ws=TRUE)
+tobacco <- read_csv('../data/tobacco.csv', trim_ws=TRUE) %>%
+  janitor::clean_names() %>%
+  rename(treat = treatment)
 glimpse(tobacco)
 ```
 
@@ -177,33 +182,22 @@ A symmetric Dirichlet prior is used for the simplex vector.  The Dirichlet
 
 # Fit the model {.tabset .tabset-faded}
 
-
-
-
-
-
-
-
-
-
-
-
-# Fit the model
-
 ```{r fitModel, results='markdown', eval=FALSE, hidden=TRUE}
 
-ggplot(tobacco, aes(y=NUMBER,x=TREATMENT)) + geom_boxplot()
-ggplot(tobacco, aes(y=NUMBER,x=as.numeric(LEAF), linetype=TREATMENT)) + geom_line()
-ggplot(tobacco, aes(y=NUMBER,x=TREATMENT, group=LEAF)) + geom_line()
+tobacco %>% 
+  ggplot(aes(y=number,x=treat)) + 
+  geom_boxplot()
+ggplot(tobacco, aes(y=number,x=as.numeric(leaf), linetype=treat)) + geom_line()
+ggplot(tobacco, aes(y=number,x=treat, group=leaf)) + geom_line()
 
-tobacco.rstanarm <- stan_glmer(NUMBER~(1|LEAF)+TREATMENT, data=tobacco,
+tobacco.rstanarm <- stan_glmer(number~(1|leaf)+treat, data=tobacco,
                            family=gaussian,refresh=0,
                             prior_PD=TRUE, 
                            chains=3, iter=5000, warmup=2000, thin=5)
 prior_summary(tobacco.rstanarm)
 ## decov is prior on covariance
 
-tobacco.rstanarm <- stan_glmer(NUMBER~(1|LEAF)+TREATMENT, data=tobacco,
+tobacco.rstanarm <- stan_glmer(number~(1|leaf)+treat, data=tobacco,
                             family=gaussian,refresh=0,
                             prior_intercept=normal(35, 10, autoscale=FALSE),
                             prior=normal(0, 10, autoscale=FALSE),
@@ -225,7 +219,7 @@ posterior_vs_prior(tobacco.rstanarm, color_by='vs', group_by=TRUE,
 
 
 
-tobacco.rstanarm1 <- stan_glmer(NUMBER~(TREATMENT|LEAF)+TREATMENT, data=tobacco,
+tobacco.rstanarm1 <- stan_glmer(number~(treat|leaf)+treat, data=tobacco,
                             family=gaussian,refresh=0,
                             prior_PD=TRUE, 
                            chains=3, iter=5000, warmup=2000, thin=5)
@@ -233,7 +227,7 @@ prior_summary(tobacco.rstanarm1)
 
 ggpredict(tobacco.rstanarm1) %>% plot(add.data=TRUE)
 
-tobacco.rstanarm1 <- stan_glmer(NUMBER~(TREATMENT|LEAF)+TREATMENT, data=tobacco,
+tobacco.rstanarm1 <- stan_glmer(number~(treat|leaf)+treat, data=tobacco,
                             family=gaussian,refresh=0,
                             prior_intercept=normal(35, 10, autoscale=FALSE),
                             prior=normal(0, 10, autoscale=FALSE),
@@ -242,7 +236,7 @@ tobacco.rstanarm1 <- stan_glmer(NUMBER~(TREATMENT|LEAF)+TREATMENT, data=tobacco,
                             prior_PD=TRUE, 
                            chains=3, iter=5000, warmup=2000, thin=5)
 
-tobacco.rstanarm1 <- stan_glmer(NUMBER~(TREATMENT|LEAF)+TREATMENT, data=tobacco,
+tobacco.rstanarm1 <- stan_glmer(number~(treat|leaf)+treat, data=tobacco,
                             family=gaussian,refresh=0,
                             prior_intercept=normal(35, 10, autoscale=FALSE),
                             prior=normal(0, 10, autoscale=FALSE),
@@ -268,13 +262,13 @@ plot(tobacco.rstanarm1,  'mcmc_rhat_hist')
 plot(tobacco.rstanarm1,  'mcmc_neff_hist')
 
 pp_check(tobacco.rstan)
-pp_check(tobacco.rstan, group='TREATMENT', plotfun='violin_grouped')
+pp_check(tobacco.rstan, group='treat', plotfun='violin_grouped')
 
-## tobacco.rstan1 <- stan_glmer(NUMBER~(TREATMENT|LEAF)+TREATMENT, data=tobacco,
+## tobacco.rstan1 <- stan_glmer(number~(treat|leaf)+treat, data=tobacco,
 ##                            family=gaussian,refresh=0,
 ##                            chains=3, iter=5000, warmup=2000, thin=5)
 
-## tobacco.rstan1 <- stan_glmer(NUMBER~(TREATMENT|LEAF)+TREATMENT, data=tobacco,
+## tobacco.rstan1 <- stan_glmer(number~(treat|leaf)+treat, data=tobacco,
 ##                            family=gaussian,refresh=0,
 ##                            chains=3, iter=5000, warmup=2000, thin=5,
 ##                            adapt_delta=0.99)
@@ -287,7 +281,7 @@ pp_check(tobacco.rstan, group='TREATMENT', plotfun='violin_grouped')
 
 preds <- posterior_predict(tobacco.rstanarm1,  nsamples=250,  summary=FALSE)
 tobacco.resids <- createDHARMa(simulatedResponse = t(preds),
-                            observedResponse = tobacco$NUMBER,
+                            observedResponse = tobacco$number,
                             fittedPredictedResponse = apply(preds, 2, median), 
                             integerResponse=FALSE)
 plot(tobacco.resids)
@@ -298,13 +292,13 @@ loo_compare(l.1, l.2)
 
 preds <- posterior_predict(tobacco.rstanarm,  nsamples=250,  summary=FALSE)
 tobacco.resids <- createDHARMa(simulatedResponse = t(preds),
-                            observedResponse = tobacco$NUMBER,
+                            observedResponse = tobacco$number,
                             fittedPredictedResponse = apply(preds, 2, median))
 plot(tobacco.resids)
 
 
 ggpredict(tobacco.rstanarm) %>% plot
-##ggemmeans(tobacco.rstan, ~TREATMENT) %>% plot
+##ggemmeans(tobacco.rstan, ~treat) %>% plot
 
 summary(tobacco.rstanarm)
 tidyMCMC(tobacco.rstanarm$stanfit,conf.int=TRUE, conf.method='HPDinterval',
@@ -312,11 +306,11 @@ tidyMCMC(tobacco.rstanarm$stanfit,conf.int=TRUE, conf.method='HPDinterval',
   data.frame
 
 bayes_R2(tobacco.rstanarm, re.form=NA) %>% median_hdci
-bayes_R2(tobacco.rstanarm, re.form=~(1|LEAF)) %>% median_hdci
+bayes_R2(tobacco.rstanarm, re.form=~(1|leaf)) %>% median_hdci
 
-newdata = emmeans(tobacco.rstanarm, ~TREATMENT) %>%
+newdata = emmeans(tobacco.rstanarm, ~treat) %>%
     gather_emmeans_draws() %>%
-    spread(key=TREATMENT, value=.value)
+    spread(key=treat, value=.value)
 newdata
 newdata = newdata %>% mutate(Eff = Strong-Weak,
                    PEff = 100*(Strong-Weak)/Weak)
@@ -327,22 +321,22 @@ hypothesis(newdata,  'PEff>0')
 hypothesis(newdata,  'PEff>10') 
 
 
-newdata = emmeans(tobacco.rstanarm, ~TREATMENT) %>% as.data.frame
+newdata = emmeans(tobacco.rstanarm, ~treat) %>% as.data.frame
 head(newdata)
-ggplot(newdata, aes(y=emmean, x=TREATMENT)) +
+ggplot(newdata, aes(y=emmean, x=treat)) +
     geom_pointrange(aes(ymin=lower.HPD, ymax=upper.HPD))
 ```
 
 ```{r fitModel.brms, results='markdown', eval=FALSE, hidden=TRUE}
-tobacco = tobacco %>% mutate(LEAF=factor(LEAF),
-                             TREATMENT=factor(TREATMENT))
+tobacco = tobacco %>% mutate(leaf=factor(leaf),
+                             treat=factor(treat))
 head(tobacco)
 
-ggplot(tobacco, aes(y=NUMBER,x=TREATMENT)) + geom_boxplot()
-ggplot(tobacco, aes(y=NUMBER,x=as.numeric(LEAF), linetype=TREATMENT)) + geom_line()
-ggplot(tobacco, aes(y=NUMBER,x=as.numeric(LEAF), linetype=TREATMENT)) + geom_blank(aes(x=LEAF)) + geom_line()
+ggplot(tobacco, aes(y=number,x=treat)) + geom_boxplot()
+ggplot(tobacco, aes(y=number,x=as.numeric(leaf), linetype=treat)) + geom_line()
+ggplot(tobacco, aes(y=number,x=as.numeric(leaf), linetype=treat)) + geom_blank(aes(x=leaf)) + geom_line()
 
-tobacco.form <- bf(NUMBER~(1|LEAF)+TREATMENT,  family=gaussian)
+tobacco.form <- bf(number~(1|leaf)+treat,  family=gaussian)
 
 tobacco.brms <- brm(tobacco.form, data=tobacco,
                            refresh=0,
@@ -358,7 +352,7 @@ mcmc_plot(tobacco.brms,  type='acf_bar')
 mcmc_plot(tobacco.brms,  type='rhat_hist')
 mcmc_plot(tobacco.brms,  type='neff_hist')
 
-tobacco.form <- bf(NUMBER~(TREATMENT|LEAF)+TREATMENT,  family=gaussian)
+tobacco.form <- bf(number~(treat|leaf)+treat,  family=gaussian)
 tobacco.brms1 <- brm(tobacco.form, data=tobacco,
                      refresh=0,
                      chains=3, iter=5000, warmup=2000, thin=5,
@@ -376,20 +370,20 @@ loo_compare(l.1, l.2)
 
 preds <- posterior_predict(tobacco.brms,  nsamples=250,  summary=FALSE)
 tobacco.resids <- createDHARMa(simulatedResponse = t(preds),
-                            observedResponse = tobacco$NUMBER,
+                            observedResponse = tobacco$number,
                             fittedPredictedResponse = apply(preds, 2, median))
 plot(tobacco.resids)
 
 preds <- posterior_predict(tobacco.brms1,  nsamples=250,  summary=FALSE)
 tobacco.resids <- createDHARMa(simulatedResponse = t(preds),
-                            observedResponse = tobacco$NUMBER,
+                            observedResponse = tobacco$number,
                             fittedPredictedResponse = apply(preds, 2, median),
                             integerResponse = TRUE)
 plot(tobacco.resids)
 
 
 ggpredict(tobacco.brms1) %>% plot
-##ggemmeans(tobacco.rstan, ~TREATMENT) %>% plot
+##ggemmeans(tobacco.rstan, ~treat) %>% plot
 
 summary(tobacco.brms)
 tidyMCMC(tobacco.brms1$fit,
@@ -397,15 +391,15 @@ tidyMCMC(tobacco.brms1$fit,
          rhat=TRUE, ess=TRUE,
          estimate.method='median')
 
-bayes_R2(tobacco.brms1, re.form=~(1|LEAF), summary=FALSE) %>% median_hdi
-bayes_R2(tobacco.brms, re.form=~(1|LEAF), summary=FALSE) %>% median_hdi
-bayes_R2(tobacco.brms1, re.form=~(TREATMENT|LEAF), summary=FALSE) %>% median_hdi
+bayes_R2(tobacco.brms1, re.form=~(1|leaf), summary=FALSE) %>% median_hdi
+bayes_R2(tobacco.brms, re.form=~(1|leaf), summary=FALSE) %>% median_hdi
+bayes_R2(tobacco.brms1, re.form=~(treat|leaf), summary=FALSE) %>% median_hdi
 bayes_R2(tobacco.brms1, re.form=NA,  summary=FALSE) %>% median_hdi
 bayes_R2(tobacco.brms1, re.form=NA,  summary=FALSE) %>% median_hdi
 
-newdata = emmeans(tobacco.brms1, ~TREATMENT) %>%
+newdata = emmeans(tobacco.brms1, ~treat) %>%
     gather_emmeans_draws() %>%
-    spread(key=TREATMENT, value=.value)
+    spread(key=treat, value=.value)
 newdata
 newdata = newdata %>% mutate(Eff = Strong-Weak,
                    PEff = 100*(Strong-Weak)/Weak)
@@ -417,9 +411,9 @@ newdata %>% summarize(Prob = sum(PEff>50)/n())
 hypothesis(newdata,  'PEff>20') 
 
 
-newdata = emmeans(tobacco.brms1, ~TREATMENT) %>% as.data.frame
+newdata = emmeans(tobacco.brms1, ~treat) %>% as.data.frame
 head(newdata)
-ggplot(newdata, aes(y=emmean, x=TREATMENT)) +
+ggplot(newdata, aes(y=emmean, x=treat)) +
     geom_pointrange(aes(ymin=lower.HPD, ymax=upper.HPD))
 ```
 

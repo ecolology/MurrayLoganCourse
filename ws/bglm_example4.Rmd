@@ -97,55 +97,315 @@ abund   dist   ldist   area   graze   alt   yr_isol
 
 The aim of the analysis is to investigate the effects of a range of predictors on the abundance of forest birds.
 
-# Read in the data
+# Read in and prepare the data
 
 ```{r readData, results='markdown', eval=TRUE}
 loyn <- read_csv('../data/loyn.csv', trim_ws=TRUE) %>%
-  janitor::clean_names()
+  janitor::clean_names() %>%
+  mutate(graze = factor(graze),
+         l_dist = log(dist),
+         l_ldist = log(ldist),
+         l_area = log(area))
 glimpse(loyn)
 ```
 
 
 
-# Exploratory data analysis
-
-
 Model formula:
 $$
-y_i \sim{} \mathcal{N}(\mu_i, \sigma^2)\\
-log(\mu_i) = \boldsymbol{\beta} \bf{X_i}
+y_i \sim{} \Gamma(\mu_i, \theta)\\
+log(\mu_i) = \beta_0+\boldsymbol{\beta_k} \bf{X_i}
 $$
 
-where $\boldsymbol{\beta}$ is a vector of effects parameters and $\bf{X}$ is a model matrix representing the additive effects of
+where $\boldsymbol{\beta_k}$ is a vector of effects parameters, $k$ and $\bf{X_i}$ is a model matrix representing the additive effects of
 the scaled versions of distance (ln), distance to the nearest large patch (ln), patch area (ln), grazing intensity, year of isolation and 
 altitude on the abundance of forest birds.
 
 
 # Fit the model {.tabset .tabset-faded}
 
+For priors, look at the values on the scatterplot matrix:
+```{r}
+car::scatterplotMatrix(~abund + l_dist + l_ldist + l_area + graze + alt + yr_isol, 
+                  data=loyn, diagonal = list(method = 'boxplot'),
+                  regLine = list(col="red"))
+```
+
+We can see that, on the link scale, the effect of most variables is unlikely to be more than ~N(0,1), while the intercept is again to be set as ~N(0,10).
+```{r}
+priors <- 
+  prior(normal(0,10), class = "Intercept") +
+  prior(normal(0,1),  class = "b")
+```
+
+We will need to scale our variables just as before, so that we can avoid having the unscaling at the end occur!
+
+```{r}
+loyn_brm1 <- brm(bf(abund ~ scale(l_dist, scale=FALSE) + 
+                      scale(l_ldist, scale=FALSE) + 
+                      scale(l_area, scale=FALSE) + 
+                      graze + 
+                      scale(alt, scale=FALSE) + 
+                      scale(yr_isol, scale=FALSE),
+                family = Gamma(link = "log")),
+                data = loyn, 
+                prior = priors,
+                sample_prior = "only", # predictive prior distribution
+                iter = 5000, warmup = 1000, chains = 3, thin = 5, refresh = 0)
+prior_summary(loyn_brm1) # it is using gamma(0.01, 0.01) as the shape or theta prior
+
+```
+
+
+```{r}
+priors <- 
+  prior(normal(0,10), class = "Intercept") +
+  prior(normal(0,1), class = "b") +
+  prior(gamma(0.01,0.01), class = "shape")
+
+loyn_brm2 <- update(loyn_brm1, sample_prior = "yes", prior = priors, refresh = 0)
+
+```
+
+## Compare prior vs. posterior
+```{r}
+loyn_brm2 %>% get_variables()
+
+loyn_brm2 %>% hypothesis("scalel_areascaleEQFALSE = 0") %>% plot()
+loyn_brm2 %>% hypothesis("graze4 = 0") %>% plot()
+
+```
+Looks good!
 
 # MCMC sampling diagnostics {.tabset .tabset-faded}
 
+```{r}
+mcmc_plot(loyn_brm2, type='combo') # good mixing of chains
+mcmc_plot(loyn_brm2, type='acf_bar') # No autocorrelation
+mcmc_plot(loyn_brm2, type='rhat_hist') # Rhat less than 1.05
+mcmc_plot(loyn_brm2, type='neff_hist') # Neff greater than 0.5 or 50%
+ggs_crosscorrelation(ggs(loyn_brm2$fit)) # some cross-correlation
+ggs_grb(ggs(loyn_brm2$fit)) # scale reduction
+```
 
 
 
 
 # Model validation {.tabset .tabset-faded}
 
+```{r, eval=F}
+pp_check(loyn_brm2, type = "dens_overlay", nsamples = 100)
+pp_check(loyn_brm2, x = "abund", type = "intervals")
+# not working for some reason!
+```
+
+DHARMa residuals:
+```{r}
+preds <- posterior_predict(loyn_brm2, nsamples = 250, 
+                           summary = FALSE)
+loyn_resids <- createDHARMa(
+  simulatedResponse = t(preds),  # simulated predictions/expected values for each observation
+  observedResponse = loyn$abund, # true values
+  fittedPredictedResponse = apply(preds, 2, median), # get median expected value for all data points
+  integerResponse = FALSE) # type of distribution
+
+plot(loyn_resids)
+```
+
+
+Bad  residual plots. Perhaps the shape of the Gamma distribution is incorrect? Perhaps the Gamma family altogether is the wrong distribution for this? Let's try changing the shape prior!
+
+```{r}
+visualize("gamma(2,1)", "gamma(1,0.5)", "gamma(0.01,0.01)", xlim = c(0,10))
+```
+re-running with gamma(2,1)...
+
+```{r}
+priors <- 
+  prior(normal(0,10), class = "Intercept") +
+  prior(normal(0,1), class = "b") +
+  prior(gamma(2,1), class = "shape")
+
+loyn_brm3 <- update(loyn_brm2, prior = priors, refresh = 0)
+```
+
+```{r}
+preds <- posterior_predict(loyn_brm3, nsamples = 250, 
+                           summary = FALSE)
+loyn_resids <- createDHARMa(
+  simulatedResponse = t(preds),  # simulated predictions/expected values for each observation
+  observedResponse = loyn$abund, # true values
+  fittedPredictedResponse = apply(preds, 2, median), # get median expected value for all data points
+  integerResponse = FALSE) # type of distribution
+
+plot(loyn_resids)
+```
+
+Still bad. Let's try using gaussian pseudo-lognormal
+```{r}
+priors <- 
+  prior(normal(0,10), class = "Intercept") +
+  prior(normal(0,1), class = "b") +
+  prior(gamma(2,1), class = "sigma")
+
+loyn_brm4 <- brm(bf(abund ~ scale(l_dist, scale=FALSE) + 
+                      scale(l_ldist, scale=FALSE) + 
+                      scale(l_area, scale=FALSE) + 
+                      graze + 
+                      scale(alt, scale=FALSE) + 
+                      scale(yr_isol, scale=FALSE),
+                family = gaussian(link = "log")), # change to lognormal
+                data = loyn, 
+                prior = priors,
+                sample_prior = "yes", # predictive prior distribution
+                iter = 5000, warmup = 1000, chains = 3, thin = 5, refresh = 0)
+waic(loyn_brm4)
+# loo(loyn_brm4)
+
+
+```
+
+
+```{r}
+preds <- posterior_predict(loyn_brm4, nsamples = 250, 
+                           summary = FALSE)
+loyn_resids <- createDHARMa(
+  simulatedResponse = t(preds),  # simulated predictions/expected values for each observation
+  observedResponse = loyn$abund, # true values
+  fittedPredictedResponse = apply(preds, 2, median), # get median expected value for all data points
+  integerResponse = FALSE) # type of distribution
+
+plot(loyn_resids)
+```
+
+This looks better.
 
 
 # Partial effects plots {.tabset .tabset-faded}
+```{r}
+loyn_brm4 %>%
+  conditional_effects() %>%
+  plot(ask = FALSE, points = TRUE) %>%
+  sjPlot::plot_grid()
+```
 
 
 # Model investigation {.tabset .tabset-faded}
+
+```{r}
+(x <-tidyMCMC(loyn_brm4$fit, estimate.method = "median",
+         conf.int = T, conf.method = "HPDinterval",
+         rhat = F, ess = F) %>% as.data.frame)
+```
+
+
+Bayes R^2:
+```{r}
+loyn_brm4 %>%
+  bayes_R2(summary = FALSE) %>%
+  median_hdci()
+```
+
+
+# Compare smaller models:
+
+Do we need all the variables? How do we compare models?
+Best to make a small number of models that speak to different aspects, such as:
+connectivity (log-distance, log-ldistance), habitat (area + grazing intensity + year), altitude (alt), and a null model.
+
+WAIC = watanabe AIC or LOO are both good. Leave one out is the best.
+
+```{r}
+mod_connectivity <- update(loyn_brm4, .~scale(l_dist) *
+                      scale(l_ldist),
+                    save_all_pars = TRUE, refresh = 0)
+mod_habitat <- update(loyn_brm4, .~scale(l_area) *
+                      graze * 
+                      scale(yr_isol),
+                    save_all_pars = TRUE, refresh = 0)
+mod_altitude <- update(loyn_brm4, .~scale(alt),
+                    save_all_pars = TRUE, refresh = 0)
+mod_null <- update(loyn_brm4, .~1,
+                    save_all_pars = TRUE, refresh = 0)
+```
+
+
+
+## WAIC:
+```{r}
+waic(mod_habitat)
+```
+
+Expected log point-wise predicted density = elpd, is calculated from each single draw, from which you can multiply by 2 to get the waic.
+
+
+## LOO:
+
+Better than WAIC
+```{r}
+loo::loo(mod_habitat)
+```
+
+elpd_loo is calculated from each single draw, from which you can multiply by 2 to get the looaic, and is essentially what the information criteria is if you left one out.
+
+To say our model is better, use loo_compare:
+```{r}
+loo_compare(loo::loo(mod_habitat, moment_match=T), loo::loo(mod_null))
+bayes_factor(mod_habitat, mod_null) # huge benefit!
+```
+
+```{r}
+loo_compare(loo::loo(mod_altitude), loo::loo(mod_null))
+bayes_factor(mod_altitude, mod_null)
+```
+
+```{r}
+loo_compare(loo::loo(mod_connectivity, moment_match=T), loo::loo(mod_null))
+bayes_factor(mod_null, mod_connectivity)
+```
+
+
+
+
+
 
 
 
 # Further analyses {.tabset .tabset-faded}
 
+```{r, eval=F}
+polis_brm3$fit %>% get_variables
+
+LD50s <- polis_brm3$fit %>% 
+  tidy_draws() %>%
+  mutate(LD50 = -b_Intercept/b_ratio)
+LD50_hpd <- LD50s %>% median_hdci(LD50) %>% janitor::clean_names()
+```
+
 
 
 # Summary figure {.tabset .tabset-faded}
+```{r, eval=F}
+loyn_grid <- with(loyn, list(ratio = modelr::seq_range(larea, n=100),
+                             graze = levels(graze)))
+
+newdata <- polis_brm3 %>% 
+  emmeans(~ratio, at = polis_grid, type = "response") %>%
+  as.data.frame() %>%
+  rename(pa = prob, lwr = lower.HPD, upr = upper.HPD)
+
+newdata %>% 
+  ggplot(aes(x = ratio, y = pa)) +
+  geom_ribbon(aes(ymin = lwr, ymax = upr), fill = "blue", alpha = 0.3) +
+  geom_line() + 
+  geom_point(data = polis) +
+  labs(x = "Island ratio", y = "Presence vs. absence") +
+  geom_vline(xintercept = c(LD50_hpd$lower,LD50_hpd$upper), 
+             color = "red", linetype = "dashed") +
+  geom_vline(xintercept = c(LD50_hpd$ld50), 
+             color = "red") +
+  scale_x_continuous(expand = expansion())
+```
 
 
 
