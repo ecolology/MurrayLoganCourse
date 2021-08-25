@@ -107,23 +107,19 @@ S       12
 
 ```{r readData, results='markdown', eval=TRUE}
 day <- read_csv('../data/day.csv', trim_ws=TRUE) %>%
-  janitor::clean_names()
+  janitor::clean_names() %>%
+  mutate(treat = fct_relevel(treat, c("NB", "S", "ALG1", "ALG2")))
 glimpse(day)
 ```
 
-Start by declaring the categorical variables as factor.
-
-```{r prepare, results='markdown', eval=TRUE, hidden=TRUE}
-day = day %>% mutate(treat=factor(treat))
-```
 
 Model formula:
 $$
 \begin{align}
 y_i &\sim{} \mathcal{Pois}(\lambda_i)\\
-ln(\mu_i) &= \boldsymbol{\beta} \bf{X_i}\\
+ln(\lambda_i) &= \boldsymbol{\beta_k} \bf{X_i}\\
 \beta_0 &\sim{} \mathcal{N}(0,10)\\
-\beta_{1,2,3} &\sim{} \mathcal{N}(0,1)\\
+\boldsymbol{\beta_{k}} &\sim{} \mathcal{N}(0,1)\\
 \end{align}
 $$
 
@@ -131,43 +127,214 @@ where $\boldsymbol{\beta}$ is a vector of effects parameters and $\bf{X}$ is a m
 
 # Exploratory data analysis {.tabset .tabset-faded}
 
+```{r}
+ggplot(day, aes(y=barnacle, x=treat)) +
+    geom_boxplot()+
+    geom_point(color='red')
+ggplot(day, aes(y=barnacle, x=treat)) +
+    geom_violin()+
+    geom_point(color='red')
+```
+
 
 # Fit the model {.tabset .tabset-faded}
 
+## Priors for a poisson:
+
+Find the mean of the first group:
+```{r}
+day %>% filter(treat == "NB") %>% summarise(mean(barnacle), sd(barnacle))
+```
+
+But on the log scale:
+```{r}
+log(15)
+```
+Close to 3, so can use that!
+
+Next, set variance of normal to something similar for the first group.
+The effects will have a similar variance.
+
+
+Finally, set 
+
+```{r}
+priors <- 
+  prior(normal(3,5), class = "Intercept") +
+  prior(normal(0,5), class = "b")
+```
+
+```{r}
+day_brm1 <- brm(bf(barnacle ~ treat,
+                family = poisson(link = "log")),
+                data = day, 
+                prior = priors,
+                sample_prior = "only", # predictive prior distribution
+                save_all_pars = TRUE,
+                iter = 5000, warmup = 5000/2, chains = 3, thin = 5)
+prior_summary(day_brm1)
+g <- day_brm1 %>% conditional_effects() %>% plot(points = T)
+g[[1]] + scale_y_log10("Barnacle") + labs(x = "Treatment")
+```
+
+Conclusion: this is a very vague prior.
+
+```{r}
+day_brm2 <- update(day_brm1, sample_prior = "yes")
+```
+
+Next, compare posterior to prior
+```{r}
+day_brm2 %>% get_variables()
+hypothesis(day_brm2, "treatALG1 = 0") %>% plot()
+```
+Prior is not affecting or restricting the posterior's shape!
 
 # MCMC sampling diagnostics {.tabset .tabset-faded}
 
+```{r}
+mcmc_plot(day_brm2, type='combo') # good mixing of chains
+mcmc_plot(day_brm2, type='acf_bar') # No autocorrelation
+mcmc_plot(day_brm2, type='rhat_hist') # Rhat less than 1.05
+mcmc_plot(day_brm2, type='neff_hist') # Neff greater than 0.5 or 50%
+ggs_crosscorrelation(ggs(day_brm2$fit)) # some cross-correlation
+ggs_grb(ggs(day_brm2$fit)) # scale reduction
+```
 
+Converged on a stable posterior distribution.
 
 # Model validation {.tabset .tabset-faded}
 
+```{r, eval=F}
+pp_check(day_brm2, type = "dens_overlay", nsamples = 100)
+pp_check(day_brm2, x = "barnacle", type = "intervals")
+# not working for some reason!
+```
 
+DHARMa residuals:
+```{r}
+preds <- posterior_predict(day_brm2, nsamples = 250, 
+                           summary = FALSE)
+day_resids <- createDHARMa(
+  simulatedResponse = t(preds),  # simulated predictions/expected values for each observation
+  observedResponse = day$barnacle, # true values
+  fittedPredictedResponse = apply(preds, 2, median), # get median expected value for all data points
+  integerResponse = TRUE) # type of distribution
+
+plot(day_resids)
+```
+
+Looks good!
 
 
 # Partial effects plots {.tabset .tabset-faded}
+```{r}
+day_brm2 %>%
+  conditional_effects() %>%
+  plot(points = TRUE)
+```
 
 
 
 # Model investigation {.tabset .tabset-faded}
+```{r}
+(x<-tidyMCMC(day_brm2, conf.int = T, conf.method = "HPDinterval",
+         drop.pars = c("lp__", "deviance", "prior_Intercept", "prior_b")))
+```
+
+* `r round(x[1,2],3)` is the estimate for the intercept, which on the normal scale is `r round(exp(x[1,2]),3)` barnacles in the treatment NB.
+* The second group S is `r round(exp(x[2,2]),3)` times the barnacles of the first treatment, at `r round(exp(x[1,2] + x[2,2]),3)`
+* etc...
+
+## R^2
+```{r}
+bayes_R2(day_brm2, summary = FALSE) %>% 
+  median_hdci()
+```
+~70% explained
 
 
- 
 # Further investigations 
 
+How different are the groups?
 
-## Post-hoc test (Tukey's){.tabset .tabset-faded}
+## Pair-wise contrasts
+
+```{r}
+day_brm2 %>%
+  emmeans(~treat, at = list(levels(day$treat)), type = "response") %>%
+  # note that we don't need the at part, as it will automatically figure out the factors. Just need it for the covariates
+  pairs()
+
+day_brm2 %>%
+  emmeans(~treat, at = list(levels(day$treat))) %>%
+  regrid() %>%
+  pairs() # HPD intervals may be wrong...
+
+(newdata <- day_brm2 %>%
+  emmeans(~treat, type = "link") %>% # didn't back-transform properly...
+  pairs() %>%
+  gather_emmeans_draws() %>%
+  mutate(fit = exp(.value)))
+newdata %>% median_hdci(fit)
+newdata_p <- newdata %>% summarise(P = sum(fit > 1) / n())
+```
+
+## Slab plot
+```{r}
+newdata %>% 
+  ggplot() +
+  geom_vline(xintercept = 1, linetype = "dashed") +
+  stat_slab(aes(x = fit, y = contrast,
+                fill = stat(ggdist::cut_cdf_qi(cdf, .width = c(0.5, 0.8, 0.95),
+                                      labels = scales::percent_format()))), color = "black") +
+  scale_fill_brewer("Interval", direction = -1, na.translate = FALSE, palette = "YlOrRd") +
+  geom_text(data = newdata_p, aes(y = contrast, x = 1, label = paste("P =",round(P,3))), hjust = 0, position = position_nudge(y=0.5))
+```
 
 
 
-## Planned contrasts{.tabset .tabset-faded}
+## Planned comparisons {.tabset .tabset-faded}
 
-Define your own
+We won't need to worry about the number of planned comparisons with bayesian!
 
-Compare:
+Compare 4+ different things using a contrast matrix:
+```{r}
+levels(day$treat)
+cmat <- cbind("Alg2_Alg1" = c(0, 0, -1,1), # do first one as positive
+              "NB_S"      = c(1,-1, 0, 0),
+              "Alg_Bare"  = c(-0.5,-0.5,0.5,0.5),
+              "Alg_NB"    = c(-1, 0, 0.5, 0.5))
+(day_em <- day_brm2 %>%
+  emmeans(~treat, type = "link") %>% # didn't back-transform properly...
+  contrast(method = list(treat= cmat)) %>%
+  gather_emmeans_draws() %>%
+  mutate(fit = exp(.value))) %>%
+  summarise(P = sum(fit > 1)/n()) -> day_em_p# probability of an effect
+  # median_hdci(fit)
+day_em_p
+```
 
-a) ALG1 vs ALG2
-b) NB vs S
-c) average of ALG1+ALG2 vs NB+S
+What is the probability that the value is 50% higher?
+```{r}
+day_em %>% summarise(P = sum(fit > 1.5)/n())
+```
+High likelihood of alg being > bare, same for alg > nb, but not a lot of evidence for differences between algaes or scraped vs. naturally bare.
+
+
+
+## Slab plot
+```{r}
+day_em %>% 
+  ggplot() +
+  geom_vline(xintercept = c(1,1.5), linetype = "dashed") +
+  stat_slab(aes(x = fit, y = contrast,
+                fill = stat(ggdist::cut_cdf_qi(cdf, .width = c(0.5, 0.8, 0.95),
+                                      labels = scales::percent_format()))), color = "black") +
+  scale_fill_brewer("Interval", direction = -1, na.translate = FALSE, palette = "YlOrRd") +
+  geom_text(data = day_em_p, aes(y = contrast, x = 1, label = paste("P =", round(P,3))), hjust = 1, position = position_nudge(y=0.8))
+```
+
 
 
 # Summary Figure {.tabset .tabset-faded}

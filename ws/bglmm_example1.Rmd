@@ -95,16 +95,102 @@ leaf   treat    number
 
 # Read in the data
 
-```{r readData, results='markdown', eval=TRUE}
+```{r}
 tobacco <- read_csv('../data/tobacco.csv', trim_ws=TRUE) %>%
   janitor::clean_names() %>%
-  rename(treat = treatment)
+  mutate(leaf = factor(leaf), treat = fct_rev(treatment))
 glimpse(tobacco)
 ```
 
 
 # Exploratory data analysis
+```{r}
+tobacco %>% 
+  ggplot(aes(y = number, x = treat)) +
+  geom_violin() +
+  geom_point(color="red")
+tobacco %>% 
+  mutate(leaf = fct_reorder(leaf, number)) %>%
+  ggplot(aes(y = number, x = treat, group = leaf)) +
+  # facet_wrap(~leaf) +
+  geom_line() +
+  geom_point(color="red")
+```
 
+Best to use a Gaussian, as we have the assumption of homogeneity of variance and it is easier to fit (poisson would crash, based on low number of samples).
+
+# Fit the model {.tabset .tabset-faded}
+
+With a regular model formulation, the priors we need would require: Intercept, slope, sigma, and some prior for every individual ($\gamma$).
+
+$$
+y_i \sim{} \mathcal{N}(\mu_i, \sigma^2)\\
+\mu_i =\bf{X_i}\boldsymbol{\beta} + \bf{Z_i}\boldsymbol{\gamma} \\
+\sigma^2 \sim{} \Gamma(2,1)\\
+\beta_0 \sim{} \mathcal{N}(31, 20)\\
+\boldsymbol{\beta_1} \sim{} \mathcal{N}(0, 10)\\
+\boldsymbol{\gamma} \sim{} \mathcal{N}(0, \boldsymbol{\theta_h})\\
+\boldsymbol{\theta_h} \sim{} \Gamma(2,1)\\ 
+$$
+
+We use the mean of:
+```{r}
+mean(tobacco$number) # 31
+```
+for mu of the intercept. The sigma:
+```{r}
+var(tobacco$number)
+```
+
+For population effects, let's use 10 to be general.
+
+For varying effects, let's use a normal distribution, but with a sigma that is a hyper-prior (a prior on a prior), with a gamma prior similar to that of our sigma.
+
+
+```{r}
+priors <- 
+  prior(normal(35,20), class="Intercept") +
+  prior(normal(0,10), class = "b") +
+  prior(gamma(2,1), class = "sigma") +
+  prior(gamma(2,1), class = "sd")
+mod1 <- brm(bf(number ~ (1|leaf) + treat), family = gaussian(link = "identity"),
+            data = tobacco,
+            prior = priors,
+            sample_prior = "yes",
+            iter = 5000, warmup = 1000, chains = 3, thin = 5)
+mod2 <- brm(bf(number ~ (treat|leaf) + treat), family = gaussian(link = "identity"),
+            data = tobacco,
+            prior = priors,
+            sample_prior = "yes",
+            iter = 8000, warmup = 4000, chains = 3, thin = 5,
+            control = list(adapt_delta=0.99))
+prior_summary(mod2)
+
+```
+
+Notice that in the prior, it has fit a LKJ cholesky prior for the random slopes
+
+With the error message, we have a number of options. We could allow a longer warm-up, but it wouldn't change much as it only uses a certain fraction of the warm-up. Instead, we could use a larger fraction of the warm-up for testing the velocity. This is done with `control = list(adapt_delta=0.99)`. The default is `adapt_delta = 0.8`.
+
+We increase both the number of iterations for warm up and the control property, and now we have nearly negligible divergent transitions.
+
+Next, let's compare the models using loo.
+```{r}
+l1 <- loo(mod1)
+l2 <- loo(mod2)
+
+loo_compare(l1, l2)
+```
+First model listed is the best (random slopes model), but isn't much better..
+```{r}
+-2*-0.3
+```
+DIC or deviance information criteria is not much greater than the SE of the difference.
+
+However, for the fun of it, let's go with the more complicated model.
+
+
+Note that the Cholesky prior is the only suitable prior for having both the individual's slope and intercepts changing together.
 
 Model formula:
 $$
@@ -180,7 +266,48 @@ A symmetric Dirichlet prior is used for the simplex vector.  The Dirichlet
   arguments of the lkj function.
 - the lkj prior is similar, yet faster than decov
 
-# Fit the model {.tabset .tabset-faded}
+
+```{r}
+(pars <- mod2 %>% get_variables())
+mod2 %>% hypothesis("treatStrong = 0") %>% plot()
+```
+Looks good!
+
+# MCMC sampling diagnostics {.tabset .tabset-faded}
+
+```{r}
+mcmc_plot(mod2, type='combo', pars = "b_.*|sd_.*|cor_.*|sigma*") # good mixing of chains
+mcmc_plot(mod2, type='acf_bar', pars = "b_.*|sd_.*|cor_.*|sigma|r_.*") # No autocorrelation
+mcmc_plot(mod2, type='rhat_hist', pars = "b_.*|sd_.*|cor_.*|sigma|r_.*") # Rhat less than 1.05
+mcmc_plot(mod2, type='neff_hist', pars = "b_.*|sd_.*|cor_.*|sigma|r_.*") # Neff greater than 0.5 or 50%
+ggs_crosscorrelation(ggs(mod2$fit)) # some cross-correlation
+ggs_grb(ggs(mod2$fit)) # scale reduction
+```
+
+Converged on a stable posterior distribution.
+
+# Model validation {.tabset .tabset-faded}
+
+```{r, eval=F}
+pp_check(mod2, type = "dens_overlay", nsamples = 100)
+pp_check(mod2, x = "number", type = "intervals")
+# not working for some reason!
+```
+
+DHARMa residuals:
+```{r}
+preds <- posterior_predict(mod2, nsamples = 250, 
+                           summary = FALSE)
+tobacco_resids <- createDHARMa(
+  simulatedResponse = t(preds),  # simulated predictions/expected values for each observation
+  observedResponse = tobacco$number, # true values
+  fittedPredictedResponse = apply(preds, 2, median), # get median expected value for all data points
+  integerResponse = FALSE) # type of distribution
+
+plot(tobacco_resids)
+```
+
+
 
 ```{r fitModel, results='markdown', eval=FALSE, hidden=TRUE}
 

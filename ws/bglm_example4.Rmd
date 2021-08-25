@@ -255,6 +255,7 @@ loyn_brm4 <- brm(bf(abund ~ scale(l_dist, scale=FALSE) +
                       scale(alt, scale=FALSE) + 
                       scale(yr_isol, scale=FALSE),
                 family = gaussian(link = "log")), # change to lognormal
+                save_all_pars = TRUE,
                 data = loyn, 
                 prior = priors,
                 sample_prior = "yes", # predictive prior distribution
@@ -343,7 +344,7 @@ Expected log point-wise predicted density = elpd, is calculated from each single
 
 Better than WAIC
 ```{r}
-loo::loo(mod_habitat)
+loo::loo(mod_habitat, moment_match = TRUE)
 ```
 
 elpd_loo is calculated from each single draw, from which you can multiply by 2 to get the looaic, and is essentially what the information criteria is if you left one out.
@@ -373,39 +374,119 @@ bayes_factor(mod_null, mod_connectivity)
 
 # Further analyses {.tabset .tabset-faded}
 
-```{r, eval=F}
-polis_brm3$fit %>% get_variables
 
-LD50s <- polis_brm3$fit %>% 
-  tidy_draws() %>%
-  mutate(LD50 = -b_Intercept/b_ratio)
-LD50_hpd <- LD50s %>% median_hdci(LD50) %>% janitor::clean_names()
+## Partial effect plots
+```{r}
+g <- mod_habitat %>% conditional_effects() %>%
+  plot(points = TRUE, ask = FALSE, plot = FALSE)
+require(patchwork)
+(g[[1]] + g[[2]]) / (g[[4]] + scale_y_log10())
 ```
-
 
 
 # Summary figure {.tabset .tabset-faded}
-```{r, eval=F}
-loyn_grid <- with(loyn, list(ratio = modelr::seq_range(larea, n=100),
-                             graze = levels(graze)))
+```{r}
+loyn_grid <- with(loyn, list(
+  l_area = c(min(l_area), mean(l_area), max(l_area)),
+    # modelr::seq_range(l_area, n=100),
+  graze = levels(graze),
+  yr_isol = mean(yr_isol)
+  ))
 
-newdata <- polis_brm3 %>% 
-  emmeans(~ratio, at = polis_grid, type = "response") %>%
-  as.data.frame() %>%
-  rename(pa = prob, lwr = lower.HPD, upr = upper.HPD)
+newdata <- mod_habitat %>% 
+  emmeans(~graze|l_area+yr_isol, at = loyn_grid, type = "response")
 
-newdata %>% 
-  ggplot(aes(x = ratio, y = pa)) +
-  geom_ribbon(aes(ymin = lwr, ymax = upr), fill = "blue", alpha = 0.3) +
-  geom_line() + 
-  geom_point(data = polis) +
-  labs(x = "Island ratio", y = "Presence vs. absence") +
-  geom_vline(xintercept = c(LD50_hpd$lower,LD50_hpd$upper), 
-             color = "red", linetype = "dashed") +
-  geom_vline(xintercept = c(LD50_hpd$ld50), 
-             color = "red") +
-  scale_x_continuous(expand = expansion())
+
+newdata %>% pairs()
+
 ```
+
+To get absolute differences, similar to before:
+```{r}
+mod_habitat %>%
+  emmeans(~graze|l_area+yr_isol, at = loyn_grid) %>%
+  regrid() %>%
+  pairs()
+```
+But note that the lower and upper HPD intervals may be incorrect. We should likely calculate these ourselves.
+
+```{r, eval=F}
+# Bad way:
+mod_habitat %>% 
+  emmeans(~graze|l_area+yr_isol, at = loyn_grid, type = "response") %>%
+  gather_draws(regex=TRUE, `graze .*`) %>%
+  separate(.variable, into = c("graze", "l_area"), sep = ", ")
+  # ... didn't finish...
+```
+
+```{r}
+# Easy way:
+mod_habitat %>% 
+  emmeans(~graze|l_area+yr_isol, at = loyn_grid, type = "response") %>%
+  pairs() %>%
+  gather_emmeans_draws() %>%
+  median_hdci()
+
+# Easy way:
+(newdata <- 
+  mod_habitat %>% 
+  emmeans(~graze|l_area+yr_isol, at = loyn_grid, type = "response") %>%
+  pairs() %>%
+  gather_emmeans_draws())
+newdata_p <- newdata %>% summarise(P = sum(.value > 1) / n())
+```
+What is the probability that grazing level 2 has more than grazing level 1? The answer is in the first row of this. (50%)
+
+Making a plot of this:
+```{r}
+newdata <-
+  mod_habitat %>% 
+  emmeans(~graze|l_area+yr_isol, at = loyn_grid, type = "response") %>%
+  pairs() %>%
+  gather_emmeans_draws()
+```
+
+## Slab plot
+```{r}
+newdata %>% ggplot() +
+  geom_vline(xintercept = 1, linetype = "dashed") +
+  stat_slab(aes(x = .value, y = contrast,
+                fill = stat(ggdist::cut_cdf_qi(cdf, .width = c(0.5, 0.8, 0.95),
+                                      labels = scales::percent_format()))), color = "black") +
+  scale_fill_brewer("Interval", direction = -1, na.translate = FALSE, palette = "YlOrRd") +
+  facet_grid(~round(l_area, 1)) +
+  geom_text(data = newdata_p, aes(y = contrast, x = 1, label = paste("P =",round(P,3))), hjust = 0, position = position_nudge(y=0.5))
+```
+
+
+
+Make the summary figure:
+
+```{r}
+loyn_grid <- with(loyn, list(
+  l_area = modelr::seq_range(l_area, n=100),
+  graze = levels(graze),
+  yr_isol = c(min(yr_isol), mean(yr_isol), max(yr_isol))
+  ))
+
+newdata <-
+  mod_habitat %>% 
+  emmeans(~graze|l_area+yr_isol, at = loyn_grid, type = "response") %>%
+  as.data.frame() %>%
+  rename(abund = response, lwr = lower.HPD, upr = upper.HPD)
+
+newdata %>%
+  ggplot(aes(y = abund, x = l_area)) +
+  geom_ribbon(aes(ymin = lwr, ymax = upr, fill = graze), alpha = 0.3) +
+  geom_line(aes(color = graze)) +
+  scale_y_log10() +
+  facet_wrap(~yr_isol, ncol=1) #+
+  # scale_x_continuous(trans = "log")
+  
+```
+
+Note that 
+
 
 
 
