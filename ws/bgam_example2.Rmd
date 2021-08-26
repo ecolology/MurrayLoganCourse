@@ -39,6 +39,8 @@ mathfont: LiberationMono
 monofont: DejaVu Sans Mono
 classoption: a4paper
 bibliography: ../resources/references.bib
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r setup, include=FALSE, warnings=FALSE, message=FALSE}
@@ -52,14 +54,25 @@ Load the necessary libraries
 ```{r libraries, results='markdown', eval=TRUE, message=FALSE, warning=FALSE}
 library(car)       #for regression diagnostics
 library(broom)     #for tidy output
+library(broom.mixed)#for summarising models
 library(ggfortify) #for model diagnostics
 library(sjPlot)    #for outputs
 library(knitr)     #for kable
 library(effects)   #for partial effects plots
+library(ggeffects)  #for partial plots
 library(emmeans)   #for estimating marginal means
 library(MASS)      #for glm.nb
 library(MuMIn)     #for AICc
 library(tidyverse) #for data wrangling
+library(rstanarm)   #for fitting models in STAN
+library(brms)       #for fitting models in STAN
+library(coda)       #for diagnostics
+library(bayesplot)  #for diagnostics
+library(ggmcmc)     #for MCMC diagnostics
+library(DHARMa)     #for residual diagnostics
+library(rstan)      #for interfacing with STAN
+library(tidybayes)  #for more tidying outputs
+theme_set(theme_classic())
 ```
 
 # Scenario
@@ -72,7 +85,7 @@ explore the temporal patterns in the Kauai Moorhen.
 
 Format of reed.csv data file
 
-Year Stilt.Oahu Stilt.Maui Coot.Oahu Coot.Maui Moorhen.Kauai Rainfall
+year stilt_oahu stilt_maui coot_oahu coot_maui moorhen rainfall
 ---- ---------- ---------- --------- --------- ------------- --------
 1956 163        169        528       177       2             15.16
 1957 272        190        338       273       NA            15.48
@@ -82,32 +95,190 @@ Year Stilt.Oahu Stilt.Maui Coot.Oahu Coot.Maui Moorhen.Kauai Rainfall
 1961 134        155        717       149       10           19.93
 
 --------------    ---------------------------------------------------
-**Year**          - a continuous predictor
-**Stilt.Oahu**    - the abundance of the Oahu stilt
-**Stilt.Maui**    - the abundance of the Maui stilt 
-**Coot.Oahu**     - the abundance of the Oahu coot 
-**Coot.Maui**     - the abundance of the Maui coot
-**Moorhen.Kauai** - the abundance of the Kauai moorhen
+**year**          - a continuous predictor
+**stilt_oahu**    - the abundance of the Oahu stilt
+**stilt_maui**    - the abundance of the Maui stilt 
+**coot_oahu**     - the abundance of the Oahu coot 
+**coot_maui**     - the abundance of the Maui coot
+**moorhen** - the abundance of the Kauai moorhen
 **Rainfal**       - the number of centimeters (or inches) of rain
 --------------    ---------------------------------------------------
 
 # Read in the data
 
 ```{r readData, results='markdown', eval=TRUE}
-reed = read_csv('../data/reed.csv', trim_ws=TRUE)
+reed_full <- read_csv('../data/reed.csv', trim_ws=TRUE) %>% 
+  janitor::clean_names() %>%
+  rename(moorhen = moorhen_kauai)
+reed <- filter(reed_full, complete.cases(moorhen))
 glimpse(reed)
 ```
 
 # Exploratory data analysis
 
+```{r}
+reed %>%
+  ggplot(aes(y = moorhen, x = year)) +
+  geom_point() + geom_smooth()
+```
+A clearly non-linear trend, as seen before.
+```{r}
+reed %>%
+  ggplot(aes(y = moorhen, x = rainfall)) +
+  geom_point() + geom_smooth()
+```
+We would like to set smoothers for year and rainfall. Because we are using counts, let's use a Poisson!
+
 Model formula:
 $$
 y_i \sim{} \mathcal{Pois}(\lambda_i)\\
-log(\lambda_i) =\beta_0 + f(Year_i) + f(Rainfall_i)
+log(\lambda_i) =\beta_0 + f(year_i) + f(rainfall_i)
 $$
 
-where $\beta_0$ is the y-intercept. $f(Year)$ and $f(Rainfall)$ indicate the additive smoothing functions of Year and Rainfall respectively. 
+where $\beta_0$ is the y-intercept. $f(year)$ and $f(rainfall)$ indicate the additive smoothing functions of year and rainfall respectively. 
+
+# Priors
+
+To decide on priors, we can find the median and mad across the dataset:
+```{r}
+reed %>%
+  summarise(log(median(moorhen)),
+            log(mad(moorhen)))
+```
+So, we will use a normal with a mean of 4 and variance of 4*2 as the intercept. Similarly, the slope can also be 8. Finally, we need to set up the smoother terms (class = "sds") as again, the same variance.
+
+```{r}
+priors <- 
+  prior(normal(4,8), class = "Intercept") +
+  prior(normal(0,8), class = "b") +
+  prior(normal(0,8), class = "sds")
+```
+
+Normal, centred at zero
 
 
 # Fit the model
+```{r}
+reed_form1 <- bf(moorhen ~ s(year, bs="cr") + s(rainfall, bs  ="cr"),
+   family = poisson(link = "log"))
+tic()
+reed_brm1 <- brm(reed_form1, 
+                 data = reed,
+                 prior = priors, 
+                 save_all_pars = TRUE,
+                 sample_prior = "yes",
+                 iter = 5000, warmup = 2500, chains = 3,
+                 thin = 5)
+save(reed_brm1, file = "reed_brm1.RData")
+toc()
+```
+
+# Prior vs. posterior
+```{r}
+pars <- reed_brm1 %>% get_variables()
+
+wch <- pars %>% stringr::str_detect("^b((?!Intercept).)*$|^sd.*") # Using a negative look-around
+g <- purrr::map(pars[wch], ~(reed_brm1 %>%
+                               hypothesis(paste(.x,"=0"), class="") %>%
+                               plot(plot=FALSE))[[1]])
+patchwork::wrap_plots(g)
+```
+
+
+# Sampling diagnostics
+
+```{r}
+pars <- reed_brm1 %>% get_variables()
+
+wch <- pars %>% stringr::str_detect("^b.*|^sd.*|^s_.*")
+mcmc_plot(reed_brm1,  type='trace', pars = pars[wch])
+mcmc_plot(reed_brm1,  type="acf_bar", pars = pars[wch])
+mcmc_plot(reed_brm1,  type='rhat_hist', pars = pars[wch])
+mcmc_plot(reed_brm1,  type='neff_hist', pars = pars[wch])
+```
+
+```{r}
+pp_check(reed_brm1, type = "dens_overlay", nsamples = 100)
+pp_check(reed_brm1, x = "ncalls", type = "intervals")
+
+# DHARMa:
+preds <- posterior_predict(reed_brm1,  nsamples=250,  summary=FALSE)
+owls_resids <- createDHARMa(simulatedResponse = t(preds),
+                            observedResponse = reed$moorhen,
+                            fittedPredictedResponse = apply(preds, 2, median),
+                            integerResponse=TRUE)
+plot(owls_resids)
+```
+Note that we are overdispersed!
+```{r}
+testDispersion(owls_resids)
+```
+
+# Re-fit a negative binomial
+
+$$
+y_i \sim{} \mathcal{NB}(\mu_i,\theta) \\
+ln(\lambda_i) = \beta_0+\Sigma(S\beta_1X) +\Sigma(S\beta_1X)\\
+\beta_0 \sim{} \mathcal{N}(4,8)\\
+\beta_{1,2} \sim{} \mathcal{N}(0,8)\\
+S \sim{} \mathcal{N}(0,8)\\
+\theta \sim{} \Gamma(0.01,0.01)\\
+$$
+
+```{r}
+priors <- 
+  prior(normal(4,8), class = "Intercept") +
+  prior(normal(0,8), class = "b") +
+  prior(normal(0,8), class = "sds") +
+  prior(gamma(0.01,0.01), class = "shape")
+
+reed_form2 <- bf(moorhen ~ s(year, bs="cr") + s(rainfall, bs  ="cr"),
+   family = negbinomial(link = "log"))
+tic()
+reed_brm2 <- brm(reed_form2, 
+                 data = reed,
+                 prior = priors, 
+                 save_all_pars = TRUE,
+                 sample_prior = "yes",
+                 iter = 5000, warmup = 2500, chains = 3,
+                 thin = 5, 
+                 control = list(adapt_delta = 0.99))
+save(reed_brm2, file = "reed_brm2.RData")
+toc()
+```
+
+
+# Partial plots
+
+```{r}
+g <- reed_brm1 %>%
+  conditional_effects() %>%
+  plot(points = T, ask = F, plot = F)
+patchwork::wrap_plots(g)
+# ggpredict(reed_brm1) %>% plot
+```
+
+Looking at the tradeplot for shape, the model isn't actually as bad as it looks.
+
+# Model interpretation/summary
+```{r}
+summary(reed_brm1)
+```
+
+Bayes' R^2
+```{r}
+reed_brm1 %>% bayes_R2(re.form=NA, summary=FALSE) %>% median_hdci()
+```
+
+Now we've got everything, but remember that plotting the emmeans is trickier since we have multiple effects, and random ones at that that we must condition on!
+
+# Predictions
+Note that this first one is supposed to be in terms of ncalls:
+```{r}
+reed_brm1 %>%
+  emmeans(~year, type = "response")
+```
+
+
+
 

@@ -54,15 +54,24 @@ Load the necessary libraries
 ```{r libraries, results='markdown', eval=TRUE, message=FALSE, warning=FALSE}
 library(car)       #for regression diagnostics
 library(broom)     #for tidy output
+library(broom.mixed)#for summarising models
 library(ggfortify) #for model diagnostics
 library(sjPlot)    #for outputs
 library(knitr)     #for kable
 library(effects)   #for partial effects plots
+library(ggeffects)  #for partial plots
 library(emmeans)   #for estimating marginal means
 library(MASS)      #for glm.nb
 library(MuMIn)     #for AICc
 library(tidyverse) #for data wrangling
-library(brms)
+library(rstanarm)   #for fitting models in STAN
+library(brms)       #for fitting models in STAN
+library(coda)       #for diagnostics
+library(bayesplot)  #for diagnostics
+library(ggmcmc)     #for MCMC diagnostics
+library(DHARMa)     #for residual diagnostics
+library(rstan)      #for interfacing with STAN
+library(tidybayes)  #for more tidying outputs
 theme_set(theme_classic())
 ```
 
@@ -75,12 +84,58 @@ Someone did something for some reason.....
 ```{r readData, results='markdown', eval=TRUE}
 owls <- read_csv('../data/owls.csv', trim_ws=TRUE) %>%
   janitor::clean_names() %>%
-  rename(food = food_treatment, sex = sex_parent)
+  rename(food = food_treatment, sex = sex_parent, ncalls = sibling_negotiation) %>%
+  mutate(food = factor(food),
+         sex = factor(sex))
 glimpse(owls)
 ```
 
 
 # Exploratory data analysis
+
+```{r}
+ggplot(data = owls) +
+    geom_boxplot(aes(y = ncalls, x = nest)) + 
+    facet_grid(sex ~ food)
+```
+High variability across nests
+
+```{r}
+ggplot(data=owls) +
+  geom_boxplot(aes(y=ncalls/brood_size,  x=sex,  color=food)) +
+  facet_wrap(~nest)
+```
+
+Although it is generally that the deprived has more calls than the satiated, it is not always the case (see Murist nest as an example).
+
+```{r}
+owls %>%
+  ggplot(aes(y = ncalls/brood_size, x = arrival_time, color=sex)) +
+    geom_point() + 
+    geom_smooth(method='lm') +
+  facet_grid(~food)
+```
+
+Arrival time also has some effect
+
+```{r}
+ggplot(data = owls,aes(y = ncalls, x = arrival_time, color=food)) +
+    geom_point() + 
+    geom_smooth(method='lm') 
+#  facet_grid(~food)
+
+```
+Same effect, without considering the offset.
+
+
+```{r}
+owls %>%
+  ggplot(aes(y = ncalls, x = arrival_time, color=food)) +
+    geom_point() + 
+  geom_smooth(method='lm') +
+  facet_wrap(~nest,  scale='free_y')
+```
+Arrival time effect per nest shows that it also could be affected by individual nest - so may also warrant a random slope model.
 
 Model formula:
 $$
@@ -93,320 +148,314 @@ and $\bf{X}$ is the model matrix representing the overall intercept and effects 
 Brood size was also incorporated as an offset.
 $\bf{Z}$ represents a cell means model matrix for the random intercepts associated with individual nests.
 
+Need priors for the intercept (on log scale), slopes (on log scale) and the variance of the 'random' intercepts. The random slope prior will be a Cholesky (as always).
+
+We will also include an offset of brood_size, which the offset is added onto after. So when making our priors, we will use summary information that does not take into account brood_size, as this will be done by the model for us.
+
+```{r}
+owls %>%
+  group_by(sex, food) %>%
+  summarise(log(median(ncalls)),
+            log(mad(ncalls)))
+```
+
+The intercept will be female-deprived, so let's use a value like 1.8 and something larger than 2 for the mean and variance, respectively, of the normal distribution. For example, 4.
+
+The slope will similarly have a similar variance as the intercept, maybe a bit smaller. If we are too limiting, we will see it when we compare prior to posterior. If we are not limiting enough, the model will run for a long time.
+
+The hyper-parameter for the individual slopes will be a simple gamma(2,1) as always. Could also use a cauchy later.
+
+
 # Fit the model
 
+```{r}
+priors <- 
+  prior(normal(1.8, 4), class = "Intercept") +
+  prior(normal(0,2), class = "b") +
+  prior(gamma(2,1), class = "sd")
+```
 
-```{r fitModel, results='markdown', eval=FALSE, hidden=TRUE}
-## Amount of Sibling negotiation (vocalizations when parents are absent)
-## Foot treatment (deprived or satiated
-## Sex of parent
-## Arrival time of parent
-## nest as random
-## Brood size offset
-owls = owls %>% mutate(nest = factor(nest),
-                       food = factor(food),
-                       sex = factor(sex),   
-                       ncalls = SiblingNegotiation)
-ggplot(data = owls) +
-    geom_boxplot(aes(y = ncalls, x = nest)) + 
-    facet_grid(sex ~ food)
+```{r}
+owls_form1 <- bf(ncalls ~ food * sex + offset(log(brood_size)) +
+                  (1|nest), family = poisson(link = "log"))
+```
+Why do we log broodsize? Because we are working the link scale when the offset comes in, and the offset is assumed to be 1:1 with the response variable.
 
-ggplot(data=owls) +
-  geom_boxplot(aes(y=ncalls/brood_size,  x=sex,  color=food)) +
-  facet_wrap(~nest)
+```{r}
+owls_brm1 <- brm(owls_form1, data = owls,
+                 prior = priors, save_all_pars = TRUE,
+                 sample_prior = "yes", 
+                 iter = 5000, warmup = 2000,
+                 thin = 10, chains = 3)
+save(owls_brm1, file = "owls_brm1.RData")
 
-ggplot(data = owls,aes(y = ncalls/brood_size, x = arrival_time, color=sex)) +
-    geom_point() + 
-    geom_smooth(method='lm') +
-  facet_grid(~food)
+```
 
-ggplot(data = owls,aes(y = ncalls, x = arrival_time, color=food)) +
-    geom_point() + 
-    geom_smooth(method='lm') 
-#  facet_grid(~food)
-
-ggplot(data = owls,aes(y = NegPerChick, x = arrival_time, color=food)) +
-    geom_point() + 
-  geom_smooth(method='lm') +
-  facet_wrap(~nest,  scale='free_y')
+```{r}
+owls_brm1 %>% get_variables()
+owls_brm1 %>% hypothesis("foodSatiated=0") %>% plot()
+```
+Looks good!
 
 
+Same thing, but for random slopes:
+```{r}
+owls_form2 <- bf(ncalls ~ food * sex + offset(log(brood_size)) +
+                  (food * sex|nest), family = poisson(link = "log"))
+owls_brm2 <- brm(owls_form2, data = owls,
+                 prior = priors, save_all_pars = TRUE,
+                 sample_prior = "yes", 
+                 iter = 5000, warmup = 2000,
+                 thin = 10, chains = 3)
+save(owls_brm2, file = "owls_brm2.RData")
+owls_brm2 %>% hypothesis("foodSatiated=0") %>% plot()
+```
 
-owls_rstanP <- stan_glmer(ncalls ~ food+sex +
-                           offset(log(brood_size)) + (1|nest),
-                         dat=owls,  family=poisson(link='log'), refresh=0, 
-                         iter=5000,  warmup=2000,  thin=10,  chains=3, cores=3)
+# Prior vs. posterior plots
+
+What if we want to look at all priors?
+
+First: find the list of important values
+```{r}
+pars <- owls_brm2 %>% get_variables()
+# wch <- pars %>% grepl("^b_.*|^sd_.*|Intercept", ., perl=TRUE)
+# Using a negative look-around:
+wch <- pars %>% stringr::str_detect("^b_((?!Intercept).)*$|^sd_.*")
+```
+
+Next: set up code to make the hypothesis plots for each plot
+```{r}
+owls_brm2 %>% hypothesis(paste(pars[wch][1],"=0"), class="") %>% plot
+```
+
+Finally, use a loop to populate a fector with the plots
+```{r}
+g <- vector("list", length = sum(wch))
+names(g) <- pars[wch]
+for (i in 1:sum(wch)) {
+  g[[i]] <- 
+    (owls_brm2 %>%
+    hypothesis(paste(pars[wch][i],"=0"), class="") %>%
+    plot(plot=FALSE))[[1]]
+}
+require(patchwork)
+# (g[[1]] | g[[2]] | g[[3]] | g[[4]]) / (g[[5]] | g[[6]] | g[[7]])
+patchwork::wrap_plots(g)
+# g %>% sjPlot::plot_grid()
+```
+
+Using `purrr::map`:
+```{r}
+g <- purrr::map(pars[wch], ~(owls_brm2 %>%
+                               hypothesis(paste(.x,"=0"), class="") %>%
+                               plot(plot=FALSE))[[1]])
+names(g) <- pars[wch]
+patchwork::wrap_plots(g)
+```
+
+Compare models:
+```{r}
+l1 <- loo::loo(owls_brm1)
+l2 <- loo::loo(owls_brm2, moment_match=T)
+loo_compare(l1, l2)
+```
+An odd error... maybe need to ask Murray about this.
+
+# Sampling diagnostics
+Skip...
 
 
-owls_rstanP <- stan_glmer(ncalls ~ food+scale(arrival_time) +
-                           offset(log(brood_size)) + (1|nest),
-                         dat=owls,  family=poisson(link='log'), refresh=0, 
-                         iter=5000,  warmup=2000,  thin=10,  chains=3, cores=3)
 
-owls_rstanP %>% get_variables()
-plot(owls_rstanP,  'mcmc_trace', regex_pars='^.Intercept|Food|Arrival|[sS]igma')
-plot(owls_rstanP,  'mcmc_acf_bar', regex_pars='^.Intercept|Food|Arrival|[sS]igma')
-plot(owls_rstanP,  'mcmc_rhat_hist', regex_pars='^.Intercept|Food|Arrival|[sS]igma')
-plot(owls_rstanP,  'mcmc_neff_hist', regex_pars='^.Intercept|Food|Arrival|[sS]igma')
-
-
-preds <- posterior_predict(owls_rstanP,  nsamples=250,  summary=FALSE)
-owls_resids <- createDHARMa(simulatedResponse = t(preds),
-                            observedResponse = owls$ncalls,
-                            fittedPredictedResponse = apply(preds, 2, median))
-plot(owls_resids)
-
-
-owls_rstanNB <- stan_glmer(ncalls ~ food+sex +
-                           offset(log(brood_size)) + (1|nest),
-                         dat=owls,  family=neg_binomial_2(link='log'), refresh=0, 
-                         iter=5000,  warmup=2000,  thin=10,  chains=3, cores=3)
-
-owls_rstanNB <- stan_glmer(ncalls ~ food+scale(arrival_time) +
-                           offset(log(brood_size)) + (1|nest),
-                         dat=owls,  family=neg_binomial_2(link='log'), refresh=0, 
-                         iter=5000,  warmup=2000,  thin=10,  chains=3, cores=3)
-
-owls_rstanNB %>% get_variables()
-plot(owls_rstanNB,  'mcmc_trace', regex_pars='^.Intercept|Food|Arrival|[sS]igma')
-plot(owls_rstanNB,  'mcmc_acf_bar', regex_pars='^.Intercept|Food|Arrival|[sS]igma')
-plot(owls_rstanNB,  'mcmc_rhat_hist', regex_pars='^.Intercept|Food|Arrival|[sS]igma')
-plot(owls_rstanNB,  'mcmc_neff_hist', regex_pars='^.Intercept|Food|Arrival|[sS]igma')
-
-
-preds <- posterior_predict(owls_rstanNB,  nsamples=250,  summary=FALSE)
-owls_resids <- createDHARMa(simulatedResponse = t(preds),
-                            observedResponse = owls$ncalls,
-                            fittedPredictedResponse = apply(preds, 2, median))
-plot(owls_resids)
-testZeroInflation(owls_resids)
+```{r, eval=F}
 
 testTemporalAutocorrelation(owls_resids,  time=owls$arrival_time)
 owls_resids1 <- recalculateResiduals(owls_resids,  group=interaction(owls$arrival_time,  owls$nest),  aggregateBy = mean)
 testTemporalAutocorrelation(owls_resids1,  time=unique(owls$arrival_time))
 
-## Cant use zero inflation with glmer
-
-owls_rstan1 <- stan_glmer(ncalls ~ food+scale(arrival_time) +
-                           offset(log(brood_size)) + (food*scale(arrival_time)|nest),
-                         dat=owls,  family=neg_binomial_2(link='log'), refresh=0, 
-                         iter=5000,  warmup=2000,  thin=10,  chains=3, cores=3)
-
-owls_rstan1 %>% get_variables()
-plot(owls_rstan1,  'mcmc_trace', regex_pars='^.Intercept|^Food|^scale.Arrival|[sS]igma')
-plot(owls_rstan1,  'mcmc_acf_bar', regex_pars='^.Intercept|^Food|^scale.Arrival|[sS]igma')
-plot(owls_rstan1,  'mcmc_rhat_hist', regex_pars='^.Intercept|^Food|^scale.Arrival|[sS]igma')
-plot(owls_rstan1,  'mcmc_neff_hist', regex_pars='^.Intercept|^Food|^scale.Arrival|[sS]igma')
-
-preds <- posterior_predict(owls_rstan1,  nsamples=250,  summary=FALSE)
-owls_resids <- createDHARMa(simulatedResponse = t(preds),
-                            observedResponse = owls$ncalls,
-                            fittedPredictedResponse = apply(preds, 2, median))
-plot(owls_resids)
-
 ```
 
-```{r fitModel.brms, results='markdown', eval=FALSE, hidden=TRUE}
-## Amount of Sibling negotiation (vocalizations when parents are absent)
-## Foot treatment (deprived or satiated
-## Sex of parent
-## Arrival time of parent
-## nest as random
-## Brood size offset
-owls = owls %>% mutate(nest =factor(nest),
-                       food = factor(food),
-                       sex = factor(sex),   
-                       ncalls = SiblingNegotiation)
-ggplot(data = owls) +
-    geom_boxplot(aes(y = ncalls, x = nest)) + 
-    facet_grid(sex ~ food)
-
-ggplot(data=owls) +
-  geom_boxplot(aes(y=ncalls,  x=sex,  color=food)) +
-  facet_wrap(~nest)
-
-ggplot(data = owls,aes(y = ncalls, x = arrival_time, color=sex)) +
-    geom_point() + 
-    geom_smooth(method='lm') +
-  facet_grid(~food)
-
-owls_form <- bf(ncalls ~ food+scale(arrival_time) +
-                  offset(log(brood_size)) + (1|nest),
-                family=poisson(link='log'))
-
- owls_form <- bf(ncalls ~ food+sex +
-                  offset(log(brood_size)) + (1|nest),
-                family=(link='log'))
-owls_brmsP <- brm(owls_form,  data=owls, refresh=0, 
-                  iter=5000,  warmup=2000,  thin=10,  chains=3, cores=3)
-
-owls_brmsP %>% get_variables()
-mcmc_plot(owls_brmsP,  type='trace')
-mcmc_plot(owls_brmsP,  type='acf_bar')
-mcmc_plot(owls_brmsP,  type='rhat_hist')
-mcmc_plot(owls_brmsP,  type='neff_hist')
-mcmc_plot(owls_brmsP,  type='trace', regex_pars='^b.Intercept|Food|Arrival|sd')
-mcmc_plot(owls_brmsP,  type='acf_bar', regex_pars='^b.Intercept|Food|Arrival|sd')
-mcmc_plot(owls_brmsP,  type='rhat_hist', regex_pars='^b.Intercept|Food|Arrival|sd')
-mcmc_plot(owls_brmsP,  type='neff_hist', regex_pars='^b.Intercept|Food|Arrival|sd')
-
-library(DHARMa)
-preds <- posterior_predict(owls_brmsP,  nsamples=250,  summary=FALSE)
-owls_resids <- createDHARMa(simulatedResponse = t(preds),
-                            observedResponse = owls$ncalls,
-                            fittedPredictedResponse = apply(preds, 2, median),
-                            integerResponse = TRUE)
-plot(owls_resids)
-testZeroInflation(owls_resids)
-
-
-
-owls_form <- bf(ncalls ~ food+sex +
-                  offset(log(brood_size)) + (1|nest),
-                family=negbinomial(link='log'))
-owls_brmsNB <- brm(owls_form,  data=owls, refresh=0, 
-                  iter=5000,  warmup=2000,  thin=10,  chains=3, cores=3)
-
-mcmc_plot(owls_brmsNB,  type='trace')
-mcmc_plot(owls_brmsNB,  type='acf_bar')
-mcmc_plot(owls_brmsNB,  type='rhat_hist')
-mcmc_plot(owls_brmsNB,  type='neff_hist')
-preds <- posterior_predict(owls_brmsNB,  nsamples=250,  summary=FALSE)
-owls_resids <- createDHARMa(simulatedResponse = t(preds),
-                            observedResponse = owls$ncalls,
-                            fittedPredictedResponse = apply(preds, 2, median),
-                            integerResponse = TRUE)
-plot(owls_resids)
-testZeroInflation(owls_resids)
-
-owls_form <- bf(ncalls ~ food+scale(arrival_time) +
-                  offset(log(brood_size)) + (1|nest),
-                zi ~ 1, 
-                family=zero_inflated_poisson(link='log'))
-
-owls_brmsZIP <- brm(owls_form,  data=owls, refresh=0, 
-                  iter=5000,  warmup=2000,  thin=10,  chains=3, cores=3)
-
-owls_brmsZIP %>% get_variables()
-
-mcmc_plot(owls_brmsZIP,  type='trace')
-, regex_pars='^b.Intercept|Food|Arrival|sd')
-mcmc_plot(owls_brmsZIP,  type='acf_bar')
-, regex_pars='^b.Intercept|Food|Arrival|sd')
-mcmc_plot(owls_brmsZIP,  type='rhat_hist')
-, regex_pars='^b.Intercept|Food|Arrival|sd')
-mcmc_plot(owls_brmsZIP,  type='neff_hist')
-, regex_pars='^b.Intercept|Food|Arrival|sd')
-
-
-preds <- posterior_predict(owls_brmsZIP,  nsamples=250,  summary=FALSE)
+# Model validation
+```{r}
+preds <- posterior_predict(owls_brm2, nsamples=250,  summary=FALSE)
 owls_resids <- createDHARMa(simulatedResponse = t(preds),
                             observedResponse = owls$ncalls,
                             fittedPredictedResponse = apply(preds, 2, median))
 plot(owls_resids)
+testZeroInflation(owls_resids)
+testDispersion(owls_resids)
+```
+
+If you continue to DHARMa resids, they look like shit - probably overdispersed, probably zero-inflated as well. Need to change to either a negative binomial, or a zero-inflated Poisson, assuming that we can't detect them sometimes.
 
 
-owls_form <- bf(ncalls ~ food+scale(arrival_time) +
-                  offset(log(brood_size)) + (1|nest),
-                zi ~ scale(arrival_time), 
-                family=zero_inflated_poisson(link='log'))
+So: now let's try making a zero-inflated poisson:
 
-owls_brmsZIP1 <- brm(owls_form,  data=owls, refresh=0, 
-                  iter=5000,  warmup=2000,  thin=10,  chains=3, cores=3)
+# Fit the new model
 
-owls_brmsZIP1 %>% get_variables()
-mcmc_plot(owls_brmsZIP1,  type='trace', regex_pars='^b.Intercept|Food|Arrival|sd')
-mcmc_plot(owls_brmsZIP1,  type='acf_bar', regex_pars='^b.Intercept|Food|Arrival|sd')
-mcmc_plot(owls_brmsZIP1,  type='rhat_hist', regex_pars='^b.Intercept|Food|Arrival|sd')
-mcmc_plot(owls_brmsZIP1,  type='neff_hist', regex_pars='^b.Intercept|Food|Arrival|sd')
+Same as previous priors, but now we also have a binomial model that determines if a zero is a real zero or not!
+
+```{r}
+priors <-
+  prior(normal(1.8, 4), class = "Intercept") +
+  prior(normal(0,2), class = "b") +
+  prior(gamma(2,1), class = "sd") +
+  prior(logistic(0,1), class = "Intercept", dpar = "zi") +
+  prior(normal(0,1), class = "b", dpar = "zi")
+
+owls_form3 <- bf(ncalls ~ food * sex + 
+                  offset(log(brood_size)) +
+                  (food * sex|nest), 
+                zi ~ food + sex,
+                family = zero_inflated_poisson(link = "log"))
+
+owls_brm3 <- brm(owls_form3, 
+                 data = owls,
+                 prior = priors, 
+                 save_all_pars = TRUE,
+                 sample_prior = "yes", 
+                 iter = 5000, warmup = 2000,
+                 thin = 10, chains = 3)
+save(owls_brm3, file = "owls_brm3.RData")
+```
+
+Hurdle poisson:
+```{r, eval=F}
+owls_brm4 <- bf(ncalls ~ food * sex + 
+                  offset(log(brood_size)) +
+                  (food * sex|nest), 
+                hu ~ food + sex,
+                family = hurdle_poisson(link = "log"))
+```
+And change the priors as well to "hu".
 
 
-preds <- posterior_predict(owls_brmsZIP1,  nsamples=250,  summary=FALSE)
+```{r}
+preds <- posterior_predict(owls_brm3, nsamples=250,  summary=FALSE)
+owls_resids <- createDHARMa(simulatedResponse = t(preds),
+                            observedResponse = owls$ncalls,
+                            fittedPredictedResponse = apply(preds, 2, median))
+plot(owls_resids)
+testZeroInflation(owls_resids)
+testDispersion(owls_resids)
+```
+
+However, this model is still horribly overdispersed!
+
+Need to fit a **zero-inflated negative binomial**!
+
+We add a dispersion parameter to the negative binomial, whereas Poisson's rate simply lambda, negative binomial has the rate AND a shape parameter with a prior: $\sim{} \Gamma(0.01,0.01)$.
+
+```{r}
+priors <-
+  prior(normal(1.8, 4), class = "Intercept") +
+  prior(normal(0,2), class = "b") +
+  prior(gamma(2,1), class = "sd") +
+  prior(logistic(0,1), class = "Intercept", dpar = "zi") +
+  prior(normal(0,1), class = "b", dpar = "zi") +
+  prior(gamma(0.01, 0.01), class = "shape")
+
+owls_form4 <- bf(ncalls ~ food * sex + 
+                  offset(log(brood_size)) +
+                  (food * sex|nest), 
+                zi ~ food + sex,
+                family = zero_inflated_negbinomial(link = "log")) # only thing that changed was the family
+
+require(tictoc)
+tic()
+owls_brm4 <- brm(owls_form4, 
+                 data = owls,
+                 prior = priors, 
+                 save_all_pars = TRUE,
+                 sample_prior = "yes", 
+                 iter = 5000, warmup = 2000,
+                 thin = 10, chains = 3)
+save(owls_brm4, file = "owls_brm4.RData")
+toc()
+```
+
+Finally, the real model diagnostics!
+
+# Prior vs. posterior
+```{r}
+pars <- owls_brm4 %>% get_variables()
+
+wch <- pars %>% stringr::str_detect("^b_((?!Intercept).)*$|^sd_.*") # Using a negative look-around
+g <- purrr::map(pars[wch], ~(owls_brm4 %>%
+                               hypothesis(paste(.x,"=0"), class="") %>%
+                               plot(plot=FALSE))[[1]])
+patchwork::wrap_plots(g)
+```
+
+
+# Sampling diagnostics
+
+```{r}
+pars <- owls_brm4 %>% get_variables()
+wch <- pars %>% stringr::str_detect("^b_((?!Intercept).)*$|^sd_.*|.*shape.*")
+mcmc_plot(owls_brm4,  type='trace', pars = pars[wch])
+mcmc_plot(owls_brm4,  type="acf_bar", pars = pars[wch])
+mcmc_plot(owls_brm4,  type='rhat_hist', pars = pars[wch])
+mcmc_plot(owls_brm4,  type='neff_hist', pars = pars[wch])
+```
+
+```{r}
+pp_check(owls_brm4, type = "dens_overlay", nsamples = 100)
+pp_check(owls_brm4, x = "ncalls", type = "intervals")
+
+# DHARMa:
+preds <- posterior_predict(owls_brm4,  nsamples=250,  summary=FALSE)
 owls_resids <- createDHARMa(simulatedResponse = t(preds),
                             observedResponse = owls$ncalls,
                             fittedPredictedResponse = apply(preds, 2, median),
                             integerResponse=TRUE)
 plot(owls_resids)
-
-
-owls_form <- bf(ncalls ~ food+scale(arrival_time) +
-                  offset(log(brood_size)) + (1|nest),
-                zi ~ scale(arrival_time), 
-                family=zero_inflated_negbinomial(link='log'))
-
-owls_brmsZINB <- brm(owls_form,  data=owls, refresh=0, 
-                  iter=5000,  warmup=2000,  thin=10,  chains=3, cores=3)
-
-owls_brmsZINB %>% get_variables()
-mcmc_plot(owls_brmsZINB,  type='trace', regex_pars='^b.Intercept|Food|Arrival|sd')
-mcmc_plot(owls_brmsZINB,  type='acf_bar', regex_pars='^b.Intercept|Food|Arrival|sd')
-mcmc_plot(owls_brmsZINB,  type='rhat_hist', regex_pars='^b.Intercept|Food|Arrival|sd')
-mcmc_plot(owls_brmsZINB,  type='neff_hist', regex_pars='^b.Intercept|Food|Arrival|sd')
-
-
-preds <- posterior_predict(owls_brmsZINB,  nsamples=250,  summary=FALSE)
-owls_resids <- createDHARMa(simulatedResponse = t(preds),
-                            observedResponse = owls$ncalls,
-                            fittedPredictedResponse = apply(preds, 2, median))
-plot(owls_resids)
-
-
-owls_form <- bf(ncalls ~ food*scale(arrival_time) +
-                  offset(log(brood_size)) + (scale(arrival_time)|nest),
-                zi ~ scale(arrival_time), 
-                family=zero_inflated_negbinomial(link='log'))
-
-owls_brmsZINB2 <- brm(owls_form,  data=owls, refresh=0, 
-                  iter=5000,  warmup=2000,  thin=10,  chains=3, cores=3)
-
-owls_brmsZINB1 %>% get_variables()
-mcmc_plot(owls_brmsZINB2,  type='trace', regex_pars='^b.Intercept|Food|Arrival|sd')
-mcmc_plot(owls_brmsZINB1,  type='acf_bar', regex_pars='^b.Intercept|Food|Arrival|sd')
-mcmc_plot(owls_brmsZINB1,  type='rhat_hist', regex_pars='^b.Intercept|Food|Arrival|sd')
-mcmc_plot(owls_brmsZINB1,  type='neff_hist', regex_pars='^b.Intercept|Food|Arrival|sd')
-
-
-preds <- posterior_predict(owls_brmsZINB2,  nsamples=250,  summary=FALSE)
-owls_resids <- createDHARMa(simulatedResponse = t(preds),
-                            observedResponse = owls$ncalls,
-                            fittedPredictedResponse = apply(preds, 2, median),
-                            integerResponse = TRUE)
-plot(owls_resids)
-
-testZeroInflation(owls_resids)
-testDispersion(owls_resids)
-
-owls_form <- bf(ncalls ~ food*sex +
-                  offset(log(brood_size)) + (1|nest),
-                zi ~ food+sex, 
-                family=zero_inflated_negbinomial(link='log'))
-
-owls_brmsZINB2 <- brm(owls_form,  data=owls, refresh=0, 
-                  iter=5000,  warmup=2000,  thin=10,  chains=3, cores=3)
-testTemporalAutocorrelation(owls_resids,  time=owls$arrival_time)
-owls_resids1 <- recalculateResiduals(owls_resids,  group=interaction(owls$arrival_time,  owls$nest),  aggregateBy = mean)
-testTemporalAutocorrelation(owls_resids1,  time=unique(owls$arrival_time))
-
-summary(owls_brmsZINB2)
-tidyMCMC(owls_brmsZINB2$fit,  estimate.method='median',
-         conf.int=TRUE,  conf.method='HPDinterval',
-         rhat=TRUE,  ess=TRUE)
-
-
-owls_grid = with(owls, list(food=levels(food),
-                            arrival_time=modelr::seq_range(arrival_time,  n=100)
-                            ))
-owls_grid = with(owls,  list(food=levels(food),
-                             arrival_time=seq(min(arrival_time),  max(arrival_time),  len=100)))
-
-newdata = emmeans(owls_brmsZINB2, ~sex|food, at=owls_grid,
-                  type='response') %>%
-  as.data.frame
-head(newdata)
-ggplot(newdata) +
-  geom_pointrange(aes(y=prob,  x=food,  color=sex,  ymin=lower.HPD,  ymax=upper.HPD),  position=position_dodge(width=0.2))
-ggplot(newdata, aes(y=prob, x=as.numeric(sex)) +
-    geom_line(aes(color=food)) +
-    geom_ribbon(aes(ymin=lower.HPD, ymax=upper.HPD, fill=food), alpha=0.2)
-
 ```
+Note that we are slightly overdispersed, but it is actually difficult to conceive overdispersed binomial models, but we could use beta-binomial if we had lots of data or if it were a true binomial model with multiple events rather than a bernoulli/logistic model.
+
+# Partial plots
+
+```{r}
+g <- owls_brm4 %>%
+  conditional_effects() %>%
+  plot(points = T, ask = F, plot = F)
+patchwork::wrap_plots(g)
+# ggpredict(owls_brm4) %>% plot
+```
+
+Looking at the tradeplot for shape, the model isn't actually as bad as it looks.
+
+# Model interpretation/summary
+```{r}
+summary(owls_brm4)
+```
+
+Bayes' R^2
+```{r}
+owls_brm4 %>% bayes_R2(re.form=NA, summary=FALSE) %>% median_hdci()
+owls_brm4 %>% bayes_R2(re.form=~(1|nest), summary=FALSE) %>% median_hdci()
+owls_brm4 %>% bayes_R2(re.form=~(food * parent|nest), summary=FALSE) %>% median_hdci() # bug - seems to report the same as the first one!
+```
+
+Now we've got everything, but remember that plotting the emmeans is trickier since we have multiple effects, and random ones at that that we must condition on!
+
+# Predictions
+Note that this first one is supposed to be in terms of ncalls:
+```{r}
+owls_brm4 %>%
+  emmeans(~food, type = "response")
+```
+But it isn't... 
+
+This second one is supposed to be the calls/chick, so 
+```{r}
+owls_brm4 %>%
+  emmeans(~food, offset = 0, type = "response")
+```
+Note that log(1) = 0, so we set offset = 0 on the log-scale (because it was a 1:1 expected slope).
+
+
+
+
+
+
+

@@ -54,11 +54,12 @@ Load the necessary libraries
 ```{r libraries, results='markdown', eval=TRUE}
 library(rstanarm)   #for fitting models in STAN
 library(brms)       #for fitting models in STAN
+library(standist)   #for exploring distributions
 library(coda)       #for diagnostics
-library(ggmcmc)     #for MCMC diagnostics
 library(bayesplot)  #for diagnostics
-library(rstan)      #for interfacing with STAN
+library(ggmcmc)     #for MCMC diagnostics
 library(DHARMa)     #for residual diagnostics
+library(rstan)      #for interfacing with STAN
 library(emmeans)    #for marginal means etc
 library(broom)      #for tidying outputs
 library(broom.mixed)

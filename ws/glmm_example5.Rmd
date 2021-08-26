@@ -417,7 +417,7 @@ emmeans(owls_glmm4, pairwise ~ food, type = "response")
 
 # Summary figures
 
-```{r summaryFig1a, results='markdown', eval=TRUE, hidden=TRUE}
+```{r}
 owls.grid <- with(owls, list(food=levels(food),
                             sex=levels(sex)))
 newdata <- emmeans(owls_glmm4, ~food+sex, at=owls.grid,
@@ -445,7 +445,7 @@ ggplot(newdata, aes(y=rate, x=food)) +
 ```
 
 
-```{r comparemodels, results='markdown', eval=TRUE, hidden=TRUE, fig.width=10, fig.height=6}
+```{r}
 
 newdata=tidy(owls.glmmTMB3, effects='fixed', conf.int=TRUE,  exponentiate=TRUE) %>%
   mutate(Model='zip (simple zi)') %>%

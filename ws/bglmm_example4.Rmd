@@ -62,6 +62,8 @@ library(emmeans)   #for estimating marginal means
 library(MASS)      #for glm.nb
 library(MuMIn)     #for AICc
 library(tidyverse) #for data wrangling
+library(tidybayes)
+require(brms)
 theme_set(theme_classic())
 ```
 
@@ -94,200 +96,196 @@ $\bf{Z}$ represents a cell means model matrix for the random intercepts associat
 
 # Fit the model
 
-```{r fitModel, results='markdown', eval=FALSE, hidden=TRUE}
-
-
-ggplot(mckeon, aes(y=PREDATION, x=symbiont)) +
+```{r fitModel.brms, results='markdown', eval=FALSE, hidden=TRUE}
+ggplot(mckeon, aes(y=predation, x=symbiont)) +
     geom_point(position=position_jitter(width=0.2, height=0))+
     facet_wrap(~block)
 
-mckeon_rstan = stan_glmer(PREDATION ~ symbiont + (1|block),
-                          data=mckeon, family=binomial(link='logit'),
-                          iter=5000, warmup=2000, chains=3, thin=5, refresh=0,
-                          cores=3)
-mckeon_rstan %>% get_variables()
-plot(mckeon_rstan,  'mcmc_trace', regex_pars='^.Intercept|symbiont|[sS]igma')
-plot(mckeon_rstan,  'mcmc_acf_bar', regex_pars='^.Intercept|symbiont|[sS]igma')
-plot(mckeon_rstan,  'mcmc_rhat_hist', regex_pars='^.Intercept|symbiont|[sS]igma')
-plot(mckeon_rstan,  'mcmc_neff_hist', regex_pars='^.Intercept|symbiont|[sS]igma')
+ggplot(mckeon, aes(y=predation, x=symbiont)) +
+    geom_point()+
+    facet_wrap(~block)
+```
 
+## Fit the model
 
-preds <- posterior_predict(mckeon_rstan,  nsamples=250,  summary=FALSE)
-mckeon_resids <- createDHARMa(simulatedResponse = t(preds),
-                            observedResponse = mckeon$PREDATION,
-                            fittedPredictedResponse = apply(preds, 2, median))
-plot(mckeon_resids)
+Run the model without any priors to see what it gives us!
+```{r, eval=F}
+mckeon_form <- bf(predation | trials(1) ~ symbiont + (1|block),
+                  family=binomial(link='logit'))
 
-mckeon_rstan1 = stan_glmer(PREDATION ~ symbiont + (symbiont|block),
-                           data=mckeon, family=binomial(link='logit'),
-                           iter=5000, warmup=2000, chains=3, thin=5, refresh=0,
-                          cores=3)
-
-mckeon_rstan1 %>% get_variables()
-plot(mckeon_rstan1,  'mcmc_trace', regex_pars='^.Intercept|^symbiont|[sS]igma')  
-plot(mckeon_rstan1,  'mcmc_acf_bar', regex_pars='^.Intercept|^symbiont|[sS]igma')
-plot(mckeon_rstan1,  'mcmc_rhat_hist', regex_pars='^.Intercept|^symbiont|[sS]igma')
-plot(mckeon_rstan1,  'mcmc_neff_hist', regex_pars='^.Intercept|^symbiont|[sS]igma')
-
-
-preds <- posterior_predict(mckeon_rstan1,  nsamples=250,  summary=FALSE)
-mckeon_resids <- createDHARMa(simulatedResponse = t(preds),
-                            observedResponse = mckeon$PREDATION,
-                            fittedPredictedResponse = apply(preds, 2, median))
-plot(mckeon_resids)
-
-#prior_summary(mckeon_rstan1)
-#posterior_vs_prior(mckeon_rstan1, color_by='vs', group_by=TRUE,
-#                   facet_args=list(scales='free_y'))
-
-loo(mckeon_rstan)
-loo(mckeon_rstan1)
-
-#as.matrix(mckeon_rstan1) %>% colnames
-#posterior_vs_prior(mckeon_rstan1, color_by='vs', group_by=TRUE,
-#                   regex_pars=c('^(Intercept)','^symbiont','^[sS]igma'), 
-#                   facet_args=list(scales='free_y'))
-
-## mckeon_rstan1 = stan_glmer(PREDATION ~ symbiont + (symbiont|block),
-##                           data=mckeon, family=binomial(link='logit'),
-##                           iter=4000, warmup=1000, chains=3, thin=5, refresh=0,
-##                           cores=3,
-##                           prior_intercept = normal(0,10),
-##                           prior=normal(0,2.5),
-##                           prior_covariance = decov(1,1,1,4))
-## posterior_vs_prior(mckeon_rstan1, color_by='vs', group_by=TRUE, regex_pars=c('^(Intercept)','^symbiont','^[sS]igma'), 
-##                    facet_args=list(scales='free_y'))
-ggpredict(mckeon_rstan1) %>% plot
-summary(mckeon_rstan1)
-
-mckeon_rstan1 %>% get_variables()
-nms=colnames(as.matrix(mckeon_rstan1))
-wch = grep('^.Intercept|^symbiont',nms)
-#posterior_vs_prior(mckeon_rstan1, color_by='vs', group_by=TRUE,
-#                   facet_args=list(scales='free_y'), pars=nms[wch])
-
-
-
-tidyMCMC(mckeon_rstan1$stanfit,conf.int=TRUE, conf.method='HPDinterval',
-         rhat=TRUE, ess=TRUE,  pars=nms[wch])
-
-emmeans(mckeon_rstan1, pairwise~symbiont, type='response')
-mckeon_em = emmeans(mckeon_rstan1, pairwise~symbiont, type='link')$contrasts %>%
-      gather_emmeans_draws() %>%
-      mutate(PEff=exp(.value))
-mckeon_em %>% head
-mckeon_em %>%
-  group_by(contrast) %>%
-  dplyr::select(contrast, PEff) %>%
-  median_hdci
-mckeon_em %>%
-  group_by(contrast) %>%
-  summarize(Prob=sum(PEff>1)/n())
-
-cmat=cbind(
-    crab_vs_shrimp=c(0,1,-1,0),
-    one_vs_both=c(0,-1/2,-1/2,1),
-    symbiont=c(1, -1/3, -1/3,-1/3)
-)
-mckeon_em = emmeans(mckeon_rstan1, ~symbiont, contr=list(cmat), type='link')$contrast %>%
-                                                                 gather_emmeans_draws() %>%
-                                                                 mutate(Fit=exp(.value)) 
-mckeon_em %>%
-  group_by(contrast) %>%
-  median_hdci(Fit)
-
-mckeon_em %>%
-  group_by(contrast) %>%
-  summarize(sum(Fit>1)/n())                                                                      
-
-newdata = emmeans(mckeon_rstan1, ~symbiont, type='response') %>% as.data.frame
-head(newdata)
-ggplot(newdata, aes(y=prob, x=symbiont)) +
-    geom_pointrange(aes(ymin=lower.HPD, ymax=upper.HPD))
+mckeon_brms <- brm(mckeon_form,
+                   data=mckeon,
+                   save_all_pars = TRUE,
+                   sample_prior = "only",
+                   iter=5000, warmup=2000, chains=3, thin=5, refresh=0,
+                   cores=3)
+prior_summary(mckeon_brms)
 
 ```
 
-```{r fitModel.brms, results='markdown', eval=FALSE, hidden=TRUE}
-mckeon = mckeon %>% mutate(block=factor(block),
-   symbiont=factor(symbiont, levels=c('none','crabs','shrimp','both')))
+Interestingly, it doesn't pick very good priors for this distribution, so let's fit it with new priors...
 
-ggplot(mckeon, aes(y=PREDATION, x=symbiont)) +
-    geom_point(position=position_jitter(width=0.2, height=0))+
-    facet_wrap(~block)
+```{r}
+priors <- 
+  prior(normal(0,2.5), class = "Intercept") + # set intercept in middle (plogis(0) = 0.5)
+  prior(normal(0,1), class = "b") +
+  prior(gamma(2,1), class = "sd")
+standist::visualize("normal(0, 2.5)", "normal(0,1), gamma(2,1)") # on the link scale
 
-ggplot(mckeon, aes(y=PREDATION, x=symbiont)) +
-    geom_point()+
-    facet_wrap(~block)
-mckeon_form <- bf(PREDATION | trials(1) ~ symbiont + (1|block),
+
+mckeon_form1 <- bf(predation | trials(1) ~ symbiont + (1|block),
                   family=binomial(link='logit'))
-mckeon_brms <- brm(mckeon_form,
-                   data=mckeon,
-                   iter=5000, warmup=2000, chains=3, thin=5, refresh=0,
+mckeon_brm1 <- brm(mckeon_form1,
+                   data = mckeon,
+                   prior = priors,
+                   save_all_pars = TRUE,
+                   sample_prior = "yes",
+                   iter=5000, warmup=2500, chains=3, thin=5,
                    cores=3)
-mcmc_plot(mckeon_brms,  type='trace')
 
-mckeon_brms %>% get_variables()
-mcmc_plot(mckeon_brms,  type='trace')
-, regex_pars='^.Intercept|symbiont|sd')
-mcmc_plot(mckeon_brms,  type='acf_bar')
-, regex_pars='^.Intercept|symbiont|sd')
-mcmc_plot(mckeon_brms,  type='rhat_hist')
-, regex_pars='^.Intercept|symbiont|sd')
-mcmc_plot(mckeon_brms,  type='neff_hist')
-, regex_pars='^.Intercept|symbiont|sd')
+mckeon_form2 <- bf(predation | trials(1) ~ symbiont + (symbiont|block),
+                  family=binomial(link='logit'))
+mckeon_brm2 <- brm(mckeon_form2,
+                   data = mckeon,
+                   prior = priors,
+                   save_all_pars = TRUE,
+                   sample_prior = "yes",
+                   iter=5000, warmup=2500, chains=3, thin=5,
+                   cores=3)
 
+l1 <- loo(mckeon_brm1); l2 <- loo(mckeon_brm2)
+loo_compare(l1, l2)
+```
+Second model is better!
+`r -7.5*-2` DIC, much greater than the SE!
 
-preds <- posterior_predict(mckeon_brms,  nsamples=250,  summary=FALSE)
+```{r}
+(pars <- mckeon_brm2 %>% get_variables())
+wch <- grepl("^b_.*|[Ss]igma|^sd|^cor_.*", pars, perl=T)
+pars[wch] # return specific columns only
+
+hypothesis(mckeon_brm2, "symbiontcrabs = 0") %>% plot()
+```
+
+Problem: the posterior seems entirely driven by the prior, which is not good...
+Prior for slope might be too small, try 5 instead of 1 for variance.
+```{r}
+priors <- 
+  prior(normal(0,2.5), class = "Intercept") + # set intercept in middle (plogis(0) = 0.5)
+  prior(normal(0,5), class = "b") +
+  prior(gamma(2,1), class = "sd")
+
+mckeon_brm2 <- mckeon_brm2 %>% update(prior = priors)
+hypothesis(mckeon_brm2, "symbiontcrabs = 0") %>% plot()
+```
+
+Looks much better!
+
+Notice that you cannot examine your prior distribution for the intercept!
+```{r}
+hypothesis(mckeon_brm2, "Intercept = 0") %>% plot()
+hypothesis(mckeon_brm2, "prior_Intercept = 0", class="") %>% plot()
+```
+Can plot these two, but problem is that they are not a fair comparison! We don't scale our variables, however, the intercept shown here is the intercept after scaling... So brms doesn't want to give us back the intercept that was used in the model (since the intercept was scaled in the first place!), so in a way is saving us from making a mistake. However, since we are using a categorical variable, there was no scaling done, so we actually CAN do this comparison in this instance!
+
+## Mixing diagnostics
+
+```{r}
+mcmc_plot(mckeon_brm2,  type='trace', regex_pars='^.Intercept|symbiont|sd')
+mcmc_plot(mckeon_brm2,  type="acf_bar", regex_pars='^.Intercept|symbiont|sd')
+mcmc_plot(mckeon_brm2,  type='rhat_hist', regex_pars='^.Intercept|symbiont|sd')
+mcmc_plot(mckeon_brm2,  type='neff_hist', regex_pars='^.Intercept|symbiont|sd')
+
+# DHARMa:
+preds <- posterior_predict(mckeon_brm2,  nsamples=250,  summary=FALSE)
 mckeon_resids <- createDHARMa(simulatedResponse = t(preds),
-                            observedResponse = mckeon$PREDATION,
+                            observedResponse = mckeon$predation,
                             fittedPredictedResponse = apply(preds, 2, median),
                             integerResponse=TRUE)
 plot(mckeon_resids)
+```
+Note that we are slightly overdispersed, but it is actually difficult to conceive overdispersed binomial models, but we could use beta-binomial if we had lots of data or if it were a true binomial model with multiple events rather than a bernoulli/logistic model.
 
-mckeon_form <- bf(PREDATION | trials(1) ~ symbiont + (symbiont|block),  family=binomial(link='logit'))
-mckeon_brms1 <- brm(mckeon_form,
-                   data=mckeon,
-                   iter=5000, warmup=2000, chains=3, thin=5, refresh=0,
-                   cores=3)
+# Partial plots
 
-mcmc_plot(mckeon_brms1,  type='trace')
-mcmc_plot(mckeon_brms1,  type='trace', regex_pars='^.Intercept|symbiont|sd')
-mcmc_plot(mckeon_brms1,  type='acf_bar')
-, regex_pars='^.Intercept|symbiont|sd')
-mcmc_plot(mckeon_brms1,  type='rhat_hist')
-, regex_pars='^.Intercept|symbiont|sd')
-mcmc_plot(mckeon_brms1,  type='neff_hist')
-, regex_pars='^.Intercept|symbiont|sd')
+```{r}
+mckeon_brm2 %>%
+  conditional_effects() %>%
+  plot(points = T)
+ggpredict(mckeon_brm2) %>% plot
+```
 
-preds <- posterior_predict(mckeon_brms1,  nsamples=250,  summary=FALSE)
-mckeon_resids <- createDHARMa(simulatedResponse = t(preds),
-                            observedResponse = mckeon$PREDATION,
-                            fittedPredictedResponse = apply(preds, 2, median),
-                            integerResponse = TRUE)
-plot(mckeon_resids)
+# Model interpretation
+```{r}
+summary(mckeon_brm2)
+# tidyMCMC(mckeon_brm2, conf.method = "HPDinterval", conf.int = T)
+```
+
+```{r}
+mckeon_brm2 %>% bayes_R2(re.form=NA, summary=FALSE) %>% median_hdci()
+```
+`re.form` forces it to marginalize based on the 'random' effects. By setting it to NA, we are not conditioning on any random effects.
+
+```{r}
+mckeon_brm2 %>% bayes_R2(re.form=~(1|block), summary=FALSE) %>% median_hdci()
+```
+This R^2 is now conditional on the random effect of block, and thus includes more sources of variance.
+
+```{r}
+mckeon_brm2 %>% bayes_R2(re.form=~(symbiont|block), summary=FALSE) %>% median_hdci()
+```
+This R^2 takes into account the individual slope responses to each symbiont.
+
+
+# Predictions
+
+```{r}
+mckeon_brm2 %>%
+  emmeans(~symbiont, type = "response") %>%
+  pairs()
+
+# Returning the probability of surviving
+mckeon_brm2 %>%
+  emmeans(~symbiont, type = "link") %>%
+  pairs() %>%
+  gather_emmeans_draws() %>%
+  mutate(fit = plogis(.value)) %>%
+  summarise(P = sum(fit > 0.5)/n())
+
+# Same, but returning odds ratios:
+mckeon_brm2 %>%
+  emmeans(~symbiont, type = "link") %>%
+  pairs() %>%
+  gather_emmeans_draws() %>%
+  mutate(fit = exp(.value))
+
+# Planned contrasts:
+cmat=cbind(
+    crab_vs_shrimp= c(0,   1,  -1,   0),
+    one_vs_both   = c(0,-1/2,-1/2,   1),
+    symbiont      = c(1,-1/3,-1/3,-1/3)
+)
+
+mckeon_brm2 %>%
+  emmeans(~symbiont, type = "link") %>%
+  contrast(method = list(cmat)) %>%
+  gather_emmeans_draws() %>%
+  mutate(fit = plogis(.value)) %>%
+  median_hdci(fit)
+```
+
+
+
+
+# Extra code already in the doc
+
+```{r, eval=F}
 
 #prior_summary(mckeon_brms1)
 #posterior_vs_prior(mckeon_brms1, color_by='vs', group_by=TRUE,
 #                   facet_args=list(scales='free_y'))
 
-loo(mckeon_brms)
-loo(mckeon_brms1)
-
-#as.matrix(mckeon_brms1) %>% colnames
-#posterior_vs_prior(mckeon_brms1, color_by='vs', group_by=TRUE,
-#                   regex_pars=c('^(Intercept)','^symbiont','^[sS]igma'), 
-#                   facet_args=list(scales='free_y'))
-
-## mckeon_brms1 = stan_glmer(PREDATION ~ symbiont + (symbiont|block),
-##                           data=mckeon, family=binomial(link='logit'),
-##                           iter=4000, warmup=1000, chains=3, thin=5, refresh=0,
-##                           cores=3,
-##                           prior_intercept = normal(0,10),
-##                           prior=normal(0,2.5),
-##                           prior_covariance = decov(1,1,1,4))
-## posterior_vs_prior(mckeon_brms1, color_by='vs', group_by=TRUE, regex_pars=c('^(Intercept)','^symbiont','^[sS]igma'), 
-##                    facet_args=list(scales='free_y'))
-ggpredict(mckeon_brms1) %>% plot
+ggpredict(mckeon_brm2) %>% plot
 
 mckeon_brms1 %>% get_variables()
 nms=colnames(as.matrix(mckeon_brms1))
@@ -307,34 +305,21 @@ tidyMCMC(mckeon_brms1$fit,conf.int=TRUE, conf.method='HPDinterval',
          rhat=TRUE, ess=TRUE)
 
 emmeans(mckeon_brms1, pairwise~symbiont, type='response')
-mckeon_em = emmeans(mckeon_brms1, pairwise~symbiont, type='link')$contrasts %>%
+mckeon_em = emmeans(mckeon_brms2, pairwise~symbiont, type='link')$contrasts %>%
       gather_emmeans_draws() %>%
       mutate(PEff=exp(.value))#,
              #Prob = plogis(.value))
-mckeon_em %>% head
+
 mckeon_em %>%
   group_by(contrast) %>%
   dplyr::select(contrast, PEff) %>%
   median_hdi
+
 mckeon_em %>%
   group_by(contrast) %>%
   summarize(Prob=sum(PEff>1)/n())
 
-mckeon_em = emmeans(mckeon_brms1, ~symbiont, type='link') %>%
-      gather_emmeans_draws()
-mckeon_em %>% mutate(P=plogis(.value)) %>% median_hdci(P)
 
-mutate(PEff=exp(.value)))#,
-             #Prob = plogis(.value))
-
-cmat=cbind(
-    crab_vs_shrimp=c(0,1,-1,0),
-    one_vs_both=c(0,-1/2,-1/2,1),
-    symbiont=c(1, -1/3, -1/3,-1/3)
-)
-mckeon_em = emmeans(mckeon_brms1, ~symbiont, contr=list(cmat), type='link')$contrast %>%
-                                                                 gather_emmeans_draws() %>%
-                                                                 mutate(Fit=exp(.value)) 
 mckeon_em %>%
   group_by(contrast) %>%
   median_hdi(Fit)
@@ -349,12 +334,5 @@ ggplot(newdata, aes(y=prob, x=symbiont)) +
     geom_pointrange(aes(ymin=lower.HPD, ymax=upper.HPD))
 
 ```
-# Model validation
-
-# Model investigation / hypothesis testing
-
-# Predictions
-
-# Summary figures
 
 # References

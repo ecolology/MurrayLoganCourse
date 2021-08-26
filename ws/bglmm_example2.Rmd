@@ -52,17 +52,21 @@ knitr::opts_chunk$set(echo = TRUE)
 Load the necessary libraries
 
 ```{r libraries, results='markdown', eval=TRUE, message=FALSE, warning=FALSE}
+library(rstan)      #for interfacing with STAN
 library(rstanarm)   #for fitting models in STAN
 library(brms)       #for fitting models in STAN
+library(standist)   #for exploring distributions
 library(coda)       #for diagnostics
 library(bayesplot)  #for diagnostics
-library(rstan)      #for interfacing with STAN
+library(ggmcmc)     #for MCMC diagnostics
+library(DHARMa)     #for residual diagnostics
 library(emmeans)    #for marginal means etc
 library(broom)      #for tidying outputs
-library(DHARMa)     #for residual diagnostics
+library(broom.mixed)
 library(tidybayes)  #for more tidying outputs
 library(ggeffects)  #for partial plots
 library(tidyverse)  #for data wrangling etc
+library(patchwork)
 theme_set(theme_classic())
 ```
 
@@ -386,14 +390,29 @@ bayes_R2(norin_brms1, re.form=~(SMR_contr|fishid), summary=FALSE) %>% median_hdi
 
 ```
 
-
-
-# Model validation
-
-# Model investigation / hypothesis testing
-
-# Predictions
-
 # Summary figures
+```{r}
+norin.grid <- with(norin,
+                   list(SMR_contr = modelr::seq_range(SMR_contr, 
+                                                      n = 100)))
+newdata <- norin.brms2 %>%
+  emmeans(~SMR_contr|TRIAL, at = norin.grid) %>%
+  as.data.frame()
+
+partial.obs <- norin %>%
+  mutate(Pred = predict(norin.brms2, 
+                        re.form = NA, summary = TRUE)['Estimate'],
+         Resid = resid(norin.brms2)[,'Estimate'],
+         Obs = Pred + Resid)
+
+ggplot(partial.obs, aes(y = emmean, x = SMR_contr, 
+                        color = TRIAL)) +
+  geom_point(data = partial.obs, aes(y = Obs)) +
+  geom_ribbon(aes(ymin = lower.HPD, ymax = upper.HPD, 
+                  fill = TRIAL), alpha = 0.3, color = NA) +
+  geom_line()
+```
+
+
 
 # References
