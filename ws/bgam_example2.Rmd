@@ -245,40 +245,117 @@ reed_brm2 <- brm(reed_form2,
                  control = list(adapt_delta = 0.99))
 save(reed_brm2, file = "reed_brm2.RData")
 toc()
+# load("reed_brm2.RData")
 ```
 
 
 # Partial plots
-
+Note that we have to use conditional_smooths for smoothers
 ```{r}
-g <- reed_brm1 %>%
-  conditional_effects() %>%
-  plot(points = T, ask = F, plot = F)
+g <- reed_brm2 %>%
+  conditional_smooths() %>%
+  plot(ask = F, plot = F)
 patchwork::wrap_plots(g)
-# ggpredict(reed_brm1) %>% plot
+# ggpredict(reed_brm2) %>% plot
 ```
 
 Looking at the tradeplot for shape, the model isn't actually as bad as it looks.
 
 # Model interpretation/summary
 ```{r}
-summary(reed_brm1)
+summary(reed_brm2)
 ```
+
+* sds is the smoother terms, show that year is important, but rainfall is not significantly different from zero, meaning that there are very few knots being used for rainfall
+* population-level effects is the actual smoother term itself
+* suggests little support for rainfall, not significantly wiggly
+* meanwhile, year is significantly wiggly, looking at the 95% credible intervals
+* shape parameter is significant, indicating significant overdispersion being accounted for
 
 Bayes' R^2
 ```{r}
-reed_brm1 %>% bayes_R2(re.form=NA, summary=FALSE) %>% median_hdci()
+reed_brm2 %>% bayes_R2(re.form=NA, summary=FALSE) %>% median_hdci()
 ```
 
 Now we've got everything, but remember that plotting the emmeans is trickier since we have multiple effects, and random ones at that that we must condition on!
 
 # Predictions
-Note that this first one is supposed to be in terms of ncalls:
+Not appropriate to do pair-wise comparisons across smoother terms, so we skip this!
+
+# Final model plot
+
+We will have to re-create the smoothers, as emmeans does not work well with splines.
+
+Since we are not working with emmeans, we can use a regular old data.frame!
 ```{r}
-reed_brm1 %>%
-  emmeans(~year, type = "response")
+reed_grid <- with(reed, data.frame(
+  year = modelr::seq_range(year, n=100),
+  rainfall = mean(rainfall)))
+
+# reed_grid <- predict(reed_brm2, newdata = reed_grid, type = "response") %>%
+#   cbind(reed_grid)
+# 
+# reed_grid %>%
+#   ggplot(data=., aes(y = Estimate, x = year)) +
+#   geom_smooth(aes(ymin = Q2.5, ymax = Q97.5), col = "blue", alpha = 0.3) +
+#   geom_line() 
 ```
 
+Correct way:
+```{r}
+reed_fitted <- reed_grid %>% 
+  add_fitted_draws(reed_brm2) 
+
+  
+reed_fitted %>%
+  median_hdci %>%
+  ggplot(aes(x = year)) +
+  geom_ribbon(aes(ymin = .lower, ymax = .upper),
+              fill = "blue", alpha = 0.3) +
+  geom_line(aes(y = .value)) +
+  geom_point(data = reed, aes(y = moorhen))
+
+```
+Fitted values are always on the response scale!!
+Predicted values are always on the link scale
+
+**Note that this plot is technically inaccurate, as the points are not after accounting for the effect of the second covariate, rainfall (though rainfall has almost no effect).**
+
+To do this, use:
+```{r, eval=F}
+# UNFINISHED
+reed_grid2 <- reed %>% mutate(rainfall = mean(rainfall))
+reed_fitted2 <- reed_grid2 %>%
+  add_fitted_draws(reed_brm2) %>%
+  median_hdci() %>%
+  ungroup() %>%
+  dplyr::select(.value)
+reed_brm2 %>% tidy_draws()
+```
+
+# Predictions
+What if we want the maximum value for each peak? We need the max value for each of the tidy_draw lines!
+```{r}
+max_peak <- reed_fitted %>%
+  ungroup() %>%
+  group_by(.draw) %>%
+  summarise(max_val  = max(.value), # this is easier than pivotting...
+            max_year = year[.value == max_val]) %>%
+  median_hdci(max_year)
+max_peak
+```
+
+Adding to our plot:
+```{r}
+
+reed_fitted %>% ungroup() %>%
+  ggplot(aes(x = year)) +
+  # geom_ribbon(aes(ymin = .lower, ymax = .upper),
+  #             fill = "blue", alpha = 0.3) +
+  geom_line(aes(y = .value, group = .draw), col = "blue", alpha = 0.05) +
+  geom_line(data = median_hdci(reed_fitted), aes(y = .value), color="white", size = 1.5) +
+  geom_point(data = reed, aes(y = moorhen))
+```
 
 
 

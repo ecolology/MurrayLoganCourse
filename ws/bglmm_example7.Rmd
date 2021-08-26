@@ -1,0 +1,391 @@
+---
+title: "Bayesian GLMM example 7"
+author: "Murray Logan"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    code_folding: show
+    collapse: no
+    df_print: paged
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: textmate
+    theme: spacelab
+    toc: yes
+    toc_float: yes
+    css: ../resources/style.css
+  pdf_document:
+    df_print: default
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: tango
+    latex_engine: xelatex
+    number_sections: yes
+    toc_depth: 2
+  word_document:
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: tango
+    toc: yes
+    toc_depth: 2
+output_dir: "docs"
+documentclass: article
+fontsize: 12pt
+mainfont: Arial
+mathfont: LiberationMono
+monofont: DejaVu Sans Mono
+classoption: a4paper
+bibliography: ../resources/references.bib
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE, warnings=FALSE, message=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Preparations
+
+Load the necessary libraries
+
+```{r libraries, results='markdown', eval=TRUE, message=FALSE, warning=FALSE}
+library(car)       #for regression diagnostics
+library(broom)     #for tidy output
+library(broom.mixed) #for tidy output
+library(ggfortify) #for model diagnostics
+library(sjPlot)    #for outputs
+library(knitr)     #for kable
+library(effects)   #for partial effects plots
+library(ggeffects) #for effects plots in ggplotjk
+library(emmeans)   #for estimating marginal means
+library(MASS)      #for glm.nb
+library(MuMIn)     #for AICc
+library(tidyverse) #for data wrangling
+library(DHARMa)    #for assessing dispersion etc
+library(lme4)      #for lmer
+library(lmerTest)  #for degrees of freedom in lmer
+library(glmmTMB)    #for glmmTMB
+library(performance) #for diagnostic plots
+library(see)         #for diagnostic plots
+library(brms)
+library(tidybayes)
+library(bayesplot)
+library(rstan)
+library(patchwork)
+theme_set(theme_classic())
+```
+
+# Scenario
+
+In an honours thesis from (1992), Mullens was investigating the ways
+that cane toads (*Bufo marinus*) respond to conditions of hypoxia. toads
+show two different kinds of breathing patterns, lung or buccal,
+requiring them to be treated separately in the experiment. Her aim was
+to expose toads to a range of O~2~ concentrations, and record their
+breathing patterns, including parameters such as the expired volume for
+individual breaths. It was desirable to have around 8 replicates to
+compare the responses of the two breathing types, and the complication
+is that animals are expensive, and different individuals are likely to
+have different O~2~ profiles (leading to possibly reduced power). There
+are two main design options for this experiment;
+
+-   One animal per O~2~ treatment, 8 concentrations, 2 breathing types.
+    With 8 replicates the experiment would require 128 animals, but that
+    this could be analysed as a completely randomized design
+-   One O~2~ profile per animal, so that each animal would be used 8
+    times and only 16 animals are required (8 lung and 8 buccal
+    breathers)
+
+Mullens decided to use the second option so as to reduce the number of
+animals required (on financial and ethical grounds). By selecting this
+option, she did not have a set of independent measurements for each
+oxygen concentration, by repeated measurements on each animal across the
+8 oxygen concentrations.
+
+![toad](../resources/bufo.jpg){width="251" height="290"}
+
+Format of mullens.csv data file
+
+breath   toad   oxy   freqbuc   sfreqbuc
+-------- ------ --------- --------- ----------
+lung     a      0         10.6      3.256
+lung     a      5         18.8      4.336
+lung     a      10        17.4      4.171
+lung     a      15        16.6      4.074
+\...     \...   \...      \...      \...
+
+-------------- ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+**breath**     Categorical listing of the breathing type treatment (buccal = buccal breathing toads, lung = lung breathing toads). This is the between subjects (plots) effect and applies to the whole toads (since a single toad can only be one breathing type - either lung or buccal). Equivalent to Factor A (between plots effect) in a split-plot design
+**toad**       These are the subjects (equivalent to the plots in a split-plot design: Factor B). The letters in this variable represent the labels given to each individual toad.
+**oxy**    0 through to 50 represent the the different oxygen concentrations (0% to 50%). The different oxygen concentrations are equivalent to the within plot effects in a split-plot (Factor C).
+**freqbuc**    The frequency of buccal breathing - the response variable
+**sfreqbuc**   Square root transformed frequency of buccal breathing - the response variable
+-------------- ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+# Read in the data
+
+```{r readData, results='markdown', eval=TRUE}
+mullens <- read_csv('../data/mullens.csv', trim_ws=TRUE) %>%
+  janitor::clean_names() %>%
+  rename(oxy = o2level) %>%
+  mutate(toad = factor(toad),
+         breath = factor(breath),
+         per_buc = freqbuc/100,
+         per_buc_nz = ifelse(per_buc == 0, 0.01, per_buc)) # set to minimum measurable value
+glimpse(mullens)
+```
+
+Data hierarchy:
+
+breath type (between toad effect)
+toad (random effect)
+oxy (within toad effect)
+freqbuc (measured y-var: not the count, the % time buccal breathing)
+
+# Exploratory data analysis
+
+**Note:** beta-distribution cannot include zeros or ones! Need to check this.
+```{r}
+mullens %>%
+  group_by(breath, oxy) %>%
+  summarise(min = min(per_buc),
+            max = max(per_buc))
+```
+
+There are zeros in the lung breathers for oxy 0, 5, 10, and 15!
+
+```{r}
+mullens %>%
+  ggplot(aes(y = per_buc, x = factor(oxy), color = breath)) +
+  geom_violin() +
+  facet_wrap(~breath, ncol = 1) +
+  geom_jitter(position = position_dodge(0.9))
+
+mullens %>%
+  ggplot(aes(x = oxy, y = per_buc, color = breath)) +
+  geom_smooth(se=F) +
+  geom_point()
+```
+
+Note that as oxy goes up, the variance in percent buccal breathing decreases. We can fit a quadratic to this.
+
+```{r}
+mullens %>%
+  ggplot(aes(y = freqbuc, x = oxy, color = breath)) +
+  facet_wrap(~breath+toad, scales='free') +
+  geom_point() +
+  geom_smooth()
+```
+
+Seem to be different slopes based on breath/frog!
+
+We will fit a **zero-one inflated beta model** with a polynomial for oxy!
+Note that this model uses a censored model, which differs from truncated models in that it has a known X, but no available value of Y.
+
+
+$$
+y_i = 
+\begin{cases}
+    [0,1],& \text{zero-one inflated logistic}\\
+    0|1,& \text{censored one-inflated logistic}\\
+    (0,1)& \text{beta distribution}\\
+\end{cases}
+$$
+
+Note that we have no ones in the model, so the censored one-inflated logistic won't do anything.
+
+# Priors
+For the beta model:
+```{r}
+mullens %>%
+  group_by(breath) %>%
+  summarise(logit(median(per_buc)),
+            logit(mad(per_buc)))
+```
+We use priors such as:
+$$
+(0,1) \sim{} \mathcal{Beta}(p_i,\phi)\\
+\phi \sim{} \mathcal{Cauchy}(0, 5)\\
+ln(\frac{p_i}{1-p_i}) = \beta_0 + \boldsymbol{\beta X}\\
+\beta_0 \sim{} \mathcal{N}(-1.9, 2)\\
+\boldsymbol{\beta} \sim{} \mathcal{N}(0, 2)\\
+$$
+# Fit the model
+```{r}
+priors <-
+  prior(normal(-1.9, 2), class="Intercept") +
+  prior(normal(0, 2), class="b") +
+  prior(cauchy(0, 5), class="sd") +
+  prior(logistic(0, 1), class="Intercept", dpar = "zoi") + # zero one inflated
+  prior(logistic(0, 1), class="Intercept", dpar = "coi") + # censored one
+  prior(normal(0, 5), class="Intercept", dpar = "phi") + # beta (on logit scale)
+  prior(cauchy(0, 5), class="sd", dpar = "zoi") + # hyperpriors
+  prior(cauchy(0, 5), class="sd", dpar = "coi") + # hyperpriors
+  prior(cauchy(0, 5), class="sd", dpar = "phi")   # hyperpriors
+
+mullens_form <- bf(per_buc ~ breath * poly(oxy,3) + (poly(oxy,3)|toad),
+                   zoi ~ (1|toad),
+                   coi ~ (1|toad),
+                   phi ~ (1|toad),
+                   family = zero_one_inflated_beta())
+
+mullens_brm1 <- brm(mullens_form, data = mullens,
+                    prior = priors,
+                    save_all_pars = TRUE,
+                    sample_prior = "yes",
+                    iter = 5000, warmup = 2500, chains = 3, thin = 5,
+                    control = list(adapt_delta = 0.99)) # normally want 10,000 samples
+save(mullens_brm1, file = "mullens_brm1.RData")
+```
+
+We are allowing the individual toads to come from different beta distributions with different variances (the `phi ~ (1|toad)` part). 
+
+# MCMC sampling diagnostics {.tabset .tabset-faded}
+
+```{r}
+mcmc_plot(mullens_brm1, type='combo') # good mixing of chains
+mcmc_plot(mullens_brm1, type='acf_bar') # No autocorrelation
+mcmc_plot(mullens_brm1, type='rhat_hist') # Rhat less than 1.05
+mcmc_plot(mullens_brm1, type='neff_hist') # Neff greater than 0.5 or 50%
+ggs_crosscorrelation(ggs(mullens_brm1$fit)) # some cross-correlation
+ggs_grb(ggs(mullens_brm1$fit)) # scale reduction
+```
+
+
+
+
+# Model validation {.tabset .tabset-faded}
+
+```{r, eval=F}
+pp_check(mullens_brm1, type = "dens_overlay", nsamples = 100)
+pp_check(loyn_brm2, x = "per_buc", type = "intervals")
+# not working for some reason!
+```
+
+DHARMa residuals:
+```{r}
+preds <- posterior_predict(mullens_brm1, nsamples = 250, 
+                           summary = FALSE)
+mullens_resids <- createDHARMa(
+  simulatedResponse = t(preds),  # simulated predictions/expected values for each observation
+  observedResponse = mullens$per_buc, # true values
+  fittedPredictedResponse = apply(preds, 2, median), # get median expected value for all data points
+  integerResponse = FALSE) # type of distribution
+
+plot(mullens_resids)
+```
+
+```{r}
+pars <- mullens_brm1 %>% get_variables()
+wch1 <- pars %>% stringr::str_detect("^b_((?!Intercept).)*$")
+wch2 <- pars %>% stringr::str_detect("^sd_.*")
+
+g <- purrr::map(pars[wch1], ~(mullens_brm1 %>%
+                               hypothesis(paste(.x,"=0"), class="") %>%
+                               plot(plot=FALSE))[[1]])
+patchwork::wrap_plots(g)
+
+g <- purrr::map(pars[wch2], ~(mullens_brm1 %>%
+                               hypothesis(paste(.x,"=0"), class="") %>%
+                               plot(plot=FALSE))[[1]] + scale_x_log10())
+patchwork::wrap_plots(g)
+
+```
+
+Censored one model is exact same as the prior, but this is only because we have no ones in the model! Thus, it doesn't truly matter, this will be benign anyways!
+
+# Partial plots
+```{r}
+g <- mullens_brm1 %>% 
+  conditional_effects() %>%
+  plot(points = TRUE, ask = FALSE, plot = FALSE)
+patchwork::wrap_plots(g)
+```
+
+
+# Model investigation / hypothesis testing {.tabset .tabset-faded}
+```{r}
+summary(mullens_brm1)
+```
+Let's stick to the population effects to keep it simple. We can see in the toad effects that phi and zoi's variance shrunk down, whereas the coi did not (because there are no ones to inform the model, so same as the prior previously).
+
+* `r plogis(-1.82)` is the rate of buccal breathing in the buccal-breathing toads
+* `r plogis(-0.42)` is the difference in the rate of buccal breathing in lung-breathing toads
+* Strong evidence that polyoxy31 shows us that there is a strong trend for a declining linear trend in the buccal breathers, but not so much for quadratic or cubed.
+* Strong evidence that the linear component for the lung breathers is different from the buccal breathers (breathlung:polyoxy31)
+* Strong evidence that the quadratic component for the lung breathers (breathlung:polyoxy32) is different and not significant relative to the buccal breathers (polyoxy32)
+
+
+
+R^2:
+```{r}
+mullens_brm1 %>% bayes_R2(re.form = NA, summary = FALSE) %>% median_hdci()
+mullens_brm1 %>% bayes_R2(re.form = ~(poly(oxy,3)|toad), summary = FALSE) %>% median_hdci()
+```
+
+
+Let's test if the lung breathers are truly different...
+We previously used emtrends for exploring polynomials:
+```{r}
+mullens_brm1 %>% emtrends(specs = "breath", var = "oxy", max.degree = 3) 
+```
+
+But can do the same using our draws:
+```{r}
+mullens_brm1 %>% 
+  emtrends(specs = "breath", var = "oxy", max.degree = 3) %>%
+  gather_emmeans_draws() %>%
+  median_hdci()
+```
+
+Linear and quadratic trend to the lung breathers (both negative), and only linear for the buccal breathers (negative).
+
+Where is the peak in the lung breathers?
+Re-create a plot grid, as we would normally.
+```{r}
+mullens_grid <- with(mullens, list(#breath = levels(breath),
+                                   oxy = modelr::seq_range(oxy, n=100)))
+mullens_em <- mullens_brm1 %>% 
+  emmeans(~oxy|breath, at = mullens_grid, type = "link") %>%
+  gather_emmeans_draws() %>% # note that the response with gather_emmeans_draws() is not working!!
+  mutate(fit = plogis(.value))
+
+
+mullens_em %>%
+  ungroup() %>%
+  group_by(breath, .draw) %>% # order is important!! Will keep breath as the group
+  summarise(max_fit = max(fit),
+            max_oxy = oxy[fit == max_fit]) %>%
+  # summarise(max_oxy = oxy[which.max(fit)]) %>% 
+  median_hdci(max_oxy)
+```
+
+# Final plots:
+```{r}
+mullens_summary <- mullens_em %>% median_hdci(fit) %>% 
+  rename(per_buc = fit, lwr = .lower, upr = .upper)
+
+mullens_em %>%
+  rename(per_buc = fit) %>%
+  ggplot(aes(y = per_buc, x = oxy)) +
+  # facet_wrap(~breath) +
+  geom_line(aes(color = breath, group = interaction(breath,.draw)), alpha = 0.05) +
+  scale_color_manual(values = c("blue", "red"), guide = "none") +
+  ggnewscale::new_scale("color") + 
+  geom_line(data = mullens_summary, aes(color = breath), size = 1.5) +
+  scale_color_manual(values = c("lavender", "mistyrose"), guide = "none") +
+  scale_y_continuous(labels = scales::percent, expand = expansion()) +
+  labs(x = "Oxygen concentration (%)", y = "Percent buccal breathing") +
+  scale_x_continuous(expand = expansion())
+```
+
+
+
+
+
+
+
+# References
