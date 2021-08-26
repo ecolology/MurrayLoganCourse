@@ -412,7 +412,7 @@ plot(owls_resids)
 ```
 Note that we are slightly overdispersed, but it is actually difficult to conceive overdispersed binomial models, but we could use beta-binomial if we had lots of data or if it were a true binomial model with multiple events rather than a bernoulli/logistic model.
 
-# Partial plots
+# Partial plots 
 
 ```{r}
 g <- owls_brm4 %>%
