@@ -165,6 +165,16 @@ gbm.perf(abalone_brt, method = "OOB")
 ```
 Between 1000-2000, so looks good!
 
+
+```{r}
+# find index for n trees with minimum CV error
+min_MSE <- which.min(abalone_brt$cv.error)
+
+# get Mean squared error (no Root-MSE for negative poisson deviances)
+abalone_brt$cv.error[min_MSE]
+```
+
+
 # Explore relative influence
 
 ```{r}
@@ -230,16 +240,76 @@ abalone_acc %>%
 
 
 # Tuning
+Could try different values and loop over to determine the uncertainty with different tuning.
+
+From: http://uc-r.github.io/gbm_regression#gbm
+
+```{r}
+# create hyperparameter grid
+hyper_grid <- expand.grid(
+  shrinkage = c(.01, .005, 0.003, 0.001),
+  interaction.depth = c(1, 5),
+  n.minobsinnode = c(5, 10, 15),
+  bag.fraction = c(.7, .8, 1), 
+  optimal_trees = 0,               # a place to dump results
+  min_MSE = 0                     # a place to dump results
+)
+
+# total number of combinations
+nrow(hyper_grid)
+## [1] 72
 
 
-# Random Forest
-```{r randomForest, results='markdown', eval=TRUE, hidden=TRUE}
+
+for(i in 1:nrow(hyper_grid)) {
+  
+  # reproducibility
+  set.seed(123)
+  
+  # train model
+  gbm_tune <- with(hyper_grid, gbm(rings ~ sex + length + diameter + height +
+                                    whole_weight + meat_weight + 
+                                    gut_weight + shell_weight,
+                  data = abalone_train,
+                  distribution = "poisson", # count of rings
+                  var.monotone = c(0,1,1,1,1,1,1,1), # forces what the type of relationship with the predictor is to be (mostly positive in this case, but sex is not helpful)
+                  n.trees = 1e4,
+                  interaction.depth = interaction.depth[i],
+                  shrinkage = shrinkage[i],
+                  n.minobsinnode = n.minobsinnode[i],
+                  bag.fraction = bag.fraction[i],
+                  train.fraction = 1, # training fraction for tree pruning is 100%, and should always be set to 1, as out of bag is far better anyways
+                  cv.folds = 3,
+                  verbose = FALSE))
+  
+  # add min training error and trees to grid
+  hyper_grid$optimal_trees[i] <- which.min(gbm_tune$valid.error)
+  hyper_grid$min_MSE[i] <- min(gbm_tune$valid.error)
+}
+
+hyper_grid %>% 
+  dplyr::arrange(min_MSE) %>%
+  pull(min_MSE)
+  head(10)
+```
+
+We would then fit the final model using the best parameterization with the optimal number of trees.
+
+
+
+
+
+# Random Forests
+
+Difference between random forest and BRTs: boosted regression trees determine the single, optimal influences, whereas random forests would find that all variables are similar.
+
+```{r}
 library(randomForest)
-abalone.rf = randomForest(RINGS ~ SEX + LENGTH + DIAMETER + HEIGHT +
-                      WHOLE_WEIGHT + MEAT_WEIGHT + GUT_WEIGHT + SHELL_WEIGHT,
+abalone_rf <- randomForest(rings ~ sex + length + diameter + height +
+                      whole_weight + meat_weight + gut_weight + shell_weight,
                       data=abalone, importance=TRUE,
                       ntree=1000)
-abalone.imp = randomForest::importance(abalone.rf)
+abalone_imp <- randomForest::importance(abalone_rf)
 ## Rank by either:
 ## *MSE (mean decrease in accuracy)
 ## For each tree, calculate OOB prediction error.
@@ -248,8 +318,8 @@ abalone.imp = randomForest::importance(abalone.rf)
 ## *NodePurity (mean decrease in node impurity)
 ## Measure of the total decline of impurity due to each
 ## predictor averaged over trees
-100*abalone.imp/sum(abalone.imp)
-varImpPlot(abalone.rf)
+100*abalone_imp/sum(abalone_imp)
+varImpPlot(abalone_rf)
 ## use brute force
-abalone.rf %>% pdp::partial('SHELL_WEIGHT') %>% autoplot
+abalone_rf %>% pdp::partial('SHELL_WEIGHT') %>% autoplot
 ```
