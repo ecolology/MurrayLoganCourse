@@ -39,6 +39,8 @@ mathfont: LiberationMono
 monofont: DejaVu Sans Mono
 classoption: a4paper
 bibliography: ../resources/references.bib
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r setup, include=FALSE}
@@ -59,6 +61,7 @@ library(randomForest)
 library(tidyverse)
 library(patchwork)
 library(stars)
+theme_set(theme_classic())
 ```
 
 # Scenario
@@ -74,7 +77,7 @@ the most important in the predictions.
 
 Format of leathwick.csv data file
 
-Site  Angaus  SegSumT SegTSeas SegLowFlow ... 
+site  angaus  seg_sum_t seg_t_seas seg_low_flow ... 
 ----- ------- ------- -------- ---------- -----
 1     0       16.0       -0.10  1.036     ...
 2     1       18.7        1.51  1.003     ...
@@ -85,13 +88,13 @@ Site  Angaus  SegSumT SegTSeas SegLowFlow ...
 ..    ..      ..          ..    ..        ...
 
 -------------- ----------------------------------------------------------------------------------------------------------------------------------------------
-**Site**       Unique label for each site.
-**Angaus**     Presence (1) or absence (0) of _Anguilla australis_ eels
-**SegSumT**    Summer air temperature (degrees celcius) at the river segment
+**site**       Unique label for each site.
+**angaus**     Presence (1) or absence (0) of _Anguilla australis_ eels
+**seg_sum_t**    Summer air temperature (degrees celcius) at the river segment
                scale
-**SegTSeas**   Winter temperature normalised to January temperature at the river
+**seg_t_seas**   Winter temperature normalised to January temperature at the river
                segment scale
-**SegLowFlow** Forth root transformed low flow rate at the river segment scale
+**seg_low_flow** Forth root transformed low flow rate at the river segment scale
 **DSDist**     Distance to coast (km) (a downstream predictor)
 **DSDam**      Presence of known downsteam obstructions (a downstream predictor)
 **DSMaxSlope** Maximum downstream slope (a downstream predictor)
@@ -108,7 +111,8 @@ Site  Angaus  SegSumT SegTSeas SegLowFlow ...
 # Read in the data
 
 ```{r readData, results='markdown', eval=TRUE}
-leathwick = read_csv('../data/leathwick.csv', trim_ws=TRUE)
+leathwick <- read_csv('../data/leathwick.csv', trim_ws=TRUE) %>% 
+  janitor::clean_names()
 glimpse(leathwick)
 ```
 
@@ -134,7 +138,7 @@ leathwick_test = leathwick_test %>% mutate(Method=factor(Method),
 # Exploratory data analysis
 
 ```{r EDA, results='markdown', eval=TRUE, hidden=TRUE, fig.width=15, fig.height=15}
-scatterplotMatrix(~Angaus+SegSumT+SegTSeas+SegLowFlow+DSDist+DSMaxSlope+DSDam+
+scatterplotMatrix(~angaus+seg_sum_t+seg_t_seas+seg_low_flow+DSDist+DSMaxSlope+DSDam+
                     USAvgT+USRainDays+USSlope+USNative+Method+LocSed,  data=leathwick,
                   diagonal=list(method='boxplot'))
 ```
