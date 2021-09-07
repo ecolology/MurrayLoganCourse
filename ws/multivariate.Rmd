@@ -402,6 +402,9 @@ g <- g + geom_polygon(data = macnally_hull,
 g
 ```
 
+# PERMANOVA
+
+
 
 
 
