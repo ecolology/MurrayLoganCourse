@@ -280,8 +280,8 @@ Evidence of quadratic or third-order relationship for lung breathers, but not bu
 
 ```{r fig.width=7, fig.height=7}
 mullens_grid <- with(mullens, 
-                    list(breath=levels(breath),
-                         oxy=modelr::seq_range(oxy, n=1000),
+                    list(breath = levels(breath),
+                         oxy = modelr::seq_range(oxy, n=1000),
                          breath = levels(breath)))
 
 newdata <- emmeans(mullens_glmm2b, ~oxy|breath,
