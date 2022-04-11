@@ -1,5 +1,0 @@
-\documentclass{$documentclass$}
-\usepackage{hyperref}
-\begin{document}
-$body$
-\end{document}
